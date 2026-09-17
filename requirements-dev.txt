@@ -1,0 +1,5 @@
+# Test and lint only. Kept out of requirements.txt so a deployment does
+# not install a test runner it will never use.
+-r requirements.txt
+pytest>=7.4
+ruff>=0.6

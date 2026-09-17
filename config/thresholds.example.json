@@ -1,0 +1,21 @@
+{
+  "_comment": "Copy to config/thresholds.json to override any threshold in src/detection.py. Keys are the constant names; bands are {LEVEL: [low, high]} with null for an open top, and must be contiguous. Values here are illustrative, not recommendations. The app reads this at import, so restart it after editing.",
+  "DOLLAR_FLOOR": 7500,
+  "MATERIALITY_PCT_OF_CONTRACT": {
+    "default": 0.0025,
+    "Light Commercial (ground-up)": 0.005,
+    "Major Renovation + Addition": 0.004
+  },
+  "PCT_BANDS": {
+    "LOW": [0.08, 0.18],
+    "MEDIUM": [0.18, 0.30],
+    "HIGH": [0.30, null]
+  },
+  "DOLLAR_PROMOTION_TIERS": {"MEDIUM": 8.0, "HIGH": 20.0},
+  "CO_AGING_DAYS_BANDS": {
+    "LOW": [21, 46],
+    "MEDIUM": [46, 61],
+    "HIGH": [61, null]
+  },
+  "COMPLIANCE_LOOKAHEAD_DAYS": 45
+}

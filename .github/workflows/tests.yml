@@ -1,0 +1,67 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Lint
+        run: ruff check src app tests
+
+      - name: Generate synthetic dataset
+        run: python src/generate_data.py
+
+      - name: Run test suite
+        run: pytest tests/ -v
+
+      # The dataset is the product here, and "seeded" is a claim, not a
+      # hope. Two independent generations have to agree to the byte or
+      # every number in the README is only true for one run.
+      - name: Dataset is byte-identical on a second generation
+        run: |
+          sha256sum data/*.csv > /tmp/first.sha
+          rm -rf data
+          python src/generate_data.py
+          sha256sum data/*.csv > /tmp/second.sha
+          diff /tmp/first.sha /tmp/second.sha
+
+      # The dashboard is executed by the test suite above (tests/test_app.py
+      # runs the real app file against a Streamlit stub, for all five
+      # projects). A health check against a running server would not do
+      # that job: Streamlit answers /_stcore/health before it has executed
+      # the script, so a NameError in the app returns healthy and ships
+      # green. This step is the belt to that braces -- it confirms the real
+      # Streamlit runtime can import and start the app.
+      - name: Streamlit can start the app
+        run: |
+          streamlit run app/streamlit_app.py --server.headless true --server.port 8501 &
+          APP_PID=$!
+          for _ in $(seq 1 45); do
+            curl -sSf http://localhost:8501/_stcore/health > /dev/null && break
+            sleep 2
+          done
+          curl -sSf http://localhost:8501/_stcore/health > /dev/null || {
+            echo "streamlit did not start"; exit 1; }
+          kill $APP_PID

@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+.streamlit/secrets.toml
+*.egg-info/
+.DS_Store
+
+# Generated on first run by src/generate_data.py (seeded, byte-identical)
+data/
+
+# Local threshold overrides (see config/thresholds.example.json)
+config/thresholds.json

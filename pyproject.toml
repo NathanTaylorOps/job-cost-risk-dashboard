@@ -1,0 +1,27 @@
+[project]
+name = "job-cost-risk-dashboard"
+version = "1.0.0"
+description = "Job-cost and schedule-risk dashboard for a custom home builder"
+requires-python = ">=3.11"
+
+[tool.ruff]
+line-length = 110
+target-version = "py311"
+# src/ and app/ are both import roots here (see pythonpath below), so say so
+# rather than leaving isort to infer it from the directory layout.
+src = [".", "src", "app", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "C4"]
+ignore = [
+    "E501",    # long lines are mostly the explanation strings, which read better whole
+    "E712",    # `== True` on a pandas mask is not the same as `is True`
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["charts", "dataset_config", "detection", "generate_data",
+                     "streamlit_stub", "test_app"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src", "app"]

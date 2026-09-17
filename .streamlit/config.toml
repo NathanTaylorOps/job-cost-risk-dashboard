@@ -1,0 +1,15 @@
+# Pinned to the light base so the severity palette renders at the contrast
+# it was checked at. The badge colors are chosen to clear WCAG AA against
+# a white background; letting the viewer's OS pick a dark theme would put
+# dark red on near-black and make HIGH the hardest thing on the page to read.
+#
+# Colors mirror the --rg-* custom properties in streamlit_app.py's <style>
+# block, so native widgets (tabs, focus rings, the selectbox border) land on
+# the same accent, ink and surface colors as the hand-built cards rather than
+# Streamlit's own defaults.
+[theme]
+base = "light"
+primaryColor = "#1F5FA8"
+backgroundColor = "#F5F5F7"
+secondaryBackgroundColor = "#FFFFFF"
+textColor = "#1A1A1A"

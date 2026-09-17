@@ -1,0 +1,10 @@
+# Pinned so the seeded dataset is byte-identical for anyone who clones
+# this: a float-repr change in a pandas point release is enough to move
+# the last cent of a CSV and turn the test suite red for no reason.
+pandas==3.0.2
+numpy==2.4.4
+streamlit>=1.40,<2
+# The call list's PDF export, alongside the CSV one. Not pinned as tight as
+# pandas above -- a PDF's exact byte layout is not part of any test here,
+# only that it opens.
+reportlab>=4.0,<5
