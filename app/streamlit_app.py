@@ -387,75 +387,102 @@ with st.sidebar:
             f"was calibrated]({REPO_URL}#how-the-numbers-were-calibrated) for "
             "the benchmarks the *numbers on this page* are checked against."
         )
+    # The deployment's configured baseline (code defaults plus
+    # config/thresholds.json). Every slider starts here and every rerun
+    # layers the current slider values back on top of it, so a slider
+    # dragged back to its start lands exactly on the shipped number.
+    base = det.DEFAULT_THRESHOLDS
     dollar_floor_input = st.number_input(
         "Materiality floor ($)", min_value=1_000, max_value=25_000,
-        value=int(det.DOLLAR_FLOOR), step=500,
+        value=int(base.dollar_floor), step=500,
         help="Below this, nothing gets flagged however bad the percentage looks.",
     )
+    default_share = float(base.materiality_pct_of_contract["default"])
     materiality_pct_input = st.slider(
-        "Materiality floor (% of contract)", min_value=0.05, max_value=1.00,
-        value=round(float(det.MATERIALITY_PCT_OF_CONTRACT["default"]) * 100, 2),
+        "Materiality floor (% of contract, residential)", min_value=0.05, max_value=1.00,
+        value=round(default_share * 100, 2),
         step=0.05, format="%.2f%%",
-        help="The floor is the larger of the dollar amount above and this share of contract value.",
+        help=(
+            "The floor is the larger of the dollar amount above and this share of contract "
+            "value. Commercial work carries a proportionally higher share (0.35% against the "
+            "shipped 0.25%); moving this moves every project type by the same ratio."
+        ),
     ) / 100
+    # Scale every project type by the same ratio, so the commercial job's
+    # higher share moves with the slider instead of sitting at its
+    # shipped value while the houses' floor climbs past it.
+    share_ratio = materiality_pct_input / default_share if default_share > 0 else 1.0
+    materiality_shares = {k: v * share_ratio for k, v in base.materiality_pct_of_contract.items()}
+    variance_low = base.pct_bands["LOW"][0]
     variance_medium, variance_high = st.slider(
         "Cost & buyout variance bands (MEDIUM / HIGH start)",
-        min_value=10, max_value=80,
-        value=(int(round(det.PCT_BANDS["MEDIUM"][0] * 100)), int(round(det.PCT_BANDS["HIGH"][0] * 100))),
+        # The LOW band opens at 10%, so MEDIUM cannot start there too: a
+        # band has to be wider than nothing.
+        min_value=int(round(variance_low * 100)) + 1, max_value=80,
+        value=(int(round(base.pct_bands["MEDIUM"][0] * 100)), int(round(base.pct_bands["HIGH"][0] * 100))),
         step=1, format="%d%%",
         help="Where a burn-rate or buyout variance moves from LOW to MEDIUM to HIGH.",
     )
     variance_high = max(variance_high, variance_medium + 1)
+    co_low = int(base.co_aging_days_bands["LOW"][0])
     co_medium, co_high = st.slider(
         "Change-order aging (MEDIUM / HIGH start, days unsigned)",
-        min_value=31, max_value=150,
-        value=(int(det.CO_AGING_DAYS_BANDS["MEDIUM"][0]), int(det.CO_AGING_DAYS_BANDS["HIGH"][0])),
+        min_value=co_low + 1, max_value=150,
+        value=(int(base.co_aging_days_bands["MEDIUM"][0]), int(base.co_aging_days_bands["HIGH"][0])),
         step=1,
-        help="A change order is first flagged (LOW) at 30 days unsigned; these move it up from there.",
+        help=(f"A change order is first flagged (LOW) at {co_low} days unsigned; "
+              "these move it up from there."),
     )
     co_high = max(co_high, co_medium + 1)
 
     threshold_overrides = {
         "DOLLAR_FLOOR": float(dollar_floor_input),
-        "MATERIALITY_PCT_OF_CONTRACT": {"default": materiality_pct_input},
+        "MATERIALITY_PCT_OF_CONTRACT": materiality_shares,
         "PCT_BANDS": {
-            "LOW": (0.10, variance_medium / 100),
+            # LOW keeps its floor unless MEDIUM has been dragged down onto
+            # it, in which case it gives way by a point rather than
+            # collapsing to an empty band.
+            "LOW": (min(variance_low, variance_medium / 100 - 0.01), variance_medium / 100),
             "MEDIUM": (variance_medium / 100, variance_high / 100),
             "HIGH": (variance_high / 100, float("inf")),
         },
         "CO_AGING_DAYS_BANDS": {
-            "LOW": (30.0, float(co_medium)),
+            "LOW": (float(co_low), float(co_medium)),
             "MEDIUM": (float(co_medium), float(co_high)),
             "HIGH": (float(co_high), float("inf")),
         },
     }
 
-det.set_thresholds(threshold_overrides)
+# This session's thresholds: a private, immutable object rather than a
+# change to the detection module. Streamlit runs every open browser tab as
+# a thread in the same process, so anything written to a module global
+# here would be read by every other viewer mid-rerun.
+thresholds = det.DEFAULT_THRESHOLDS.with_overrides(threshold_overrides)
 
 
-def compute_results(data: dict) -> dict:
-    """Every detector's output, at whatever thresholds are currently set.
-    Deliberately not cached: the dataset is a few hundred rows across five
-    jobs, this runs in well under a second, and caching it would mean
-    keying the cache on every slider in the sidebar above -- more risk for
-    a saving nobody will feel."""
+def compute_results(data: dict, thresholds: det.Thresholds) -> dict:
+    """Every detector's output at the given thresholds. Deliberately not
+    cached: the dataset is a few hundred rows across five jobs, this runs
+    in well under a second, and caching it would mean keying the cache on
+    every slider in the sidebar above -- more risk for a saving nobody
+    will feel."""
     return {
-        "cost_flags": det.detect_cost_anomalies(data),
-        "drift_flags": det.detect_budget_drift(data),
-        "commitment_flags": det.detect_commitment_issues(data),
-        "schedule_risk": det.compute_schedule_risk(data),
-        "co_aging": det.detect_co_aging(data),
-        "allowances": det.detect_allowance_overages(data),
-        "billing": det.compute_billing_position(data),
-        "forecast": det.compute_cost_forecast(data),
-        "compliance": det.detect_compliance_flags(data),
-        "cross_project": det.detect_cross_project_patterns(data),
-        "rollup": det.portfolio_rollup(data),
-        "budgets": det.effective_budgets(data),
+        "cost_flags": det.detect_cost_anomalies(data, thresholds),
+        "drift_flags": det.detect_budget_drift(data, thresholds),
+        "commitment_flags": det.detect_commitment_issues(data, thresholds),
+        "schedule_risk": det.compute_schedule_risk(data, thresholds=thresholds),
+        "co_aging": det.detect_co_aging(data, thresholds=thresholds),
+        "allowances": det.detect_allowance_overages(data, thresholds=thresholds),
+        "billing": det.compute_billing_position(data, thresholds),
+        "forecast": det.compute_cost_forecast(data, thresholds),
+        "compliance": det.detect_compliance_flags(data, thresholds=thresholds),
+        "cross_project": det.detect_cross_project_patterns(data, thresholds=thresholds),
+        "rollup": det.portfolio_rollup(data, thresholds=thresholds),
+        "budgets": det.effective_budgets(data, thresholds),
     }
 
 
-results = compute_results(data)
+results = compute_results(data, thresholds)
 
 
 def short_name(name: str) -> str:
@@ -1002,7 +1029,7 @@ with tab_co:
         chart_card(charts.co_aging_chart(
             [{"co_id": f.co_id, "days": int(f.days_unapproved),
               "amount": float(f.amount), "severity": f.severity} for f in co_items],
-            det.CO_AGING_DAYS_BANDS,
+            thresholds.co_aging_days_bands,
         ))
         st.caption(
             "Bar color is the flag's severity, not its age: a change order worth "
@@ -1011,7 +1038,7 @@ with tab_co:
         )
     else:
         st.success(f"No change orders sitting unsigned past "
-                   f"{det.CO_AGING_THRESHOLD_DAYS:.0f} days.")
+                   f"{thresholds.co_aging_threshold_days:.0f} days.")
     flags_card([(f.severity, f.explanation, "") for f in co_items])
     all_co = data["change_orders"]
     co_tbl = all_co[all_co["project_id"] == selected_pid][

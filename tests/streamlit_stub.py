@@ -12,6 +12,10 @@ import functools
 LOG = []
 CTX = ["<page>"]
 SELECT_INDEX = 0
+# Widget values a test wants to simulate, by widget label. Anything not
+# listed is left at the default the app passes, so the suite tests the
+# page at the shipped thresholds unless a test says otherwise.
+WIDGET_OVERRIDES = {}
 
 
 class StopExecution(Exception):
@@ -38,11 +42,13 @@ class _SessionState(dict):
 session_state = _SessionState()
 
 
-def reset(select_index=0):
+def reset(select_index=0, widget_overrides=None):
     global SELECT_INDEX
     LOG.clear()
     CTX[:] = ["<page>"]
     SELECT_INDEX = select_index
+    WIDGET_OVERRIDES.clear()
+    WIDGET_OVERRIDES.update(widget_overrides or {})
     session_state.clear()
 
 
@@ -136,10 +142,23 @@ def selectbox(label, options, **k):
     return options[SELECT_INDEX]
 
 
+def _in_range(label, value, min_value, max_value):
+    """Real Streamlit refuses a value outside the widget's range; a test
+    that simulates one must not silently get away with it."""
+    for v in (value if isinstance(value, tuple) else (value,)):
+        if min_value is not None and v < min_value:
+            raise ValueError(f"{label}: {v} is below min_value {min_value}")
+        if max_value is not None and v > max_value:
+            raise ValueError(f"{label}: {v} is above max_value {max_value}")
+
+
 def slider(label, min_value=None, max_value=None, value=None, step=None, **k):
-    """Simulates leaving every slider at its default: the suite is testing
-    that the page renders correctly at the shipped thresholds, not sampling
-    the control surface. value is returned unchanged, tuple or scalar."""
+    """Simulates leaving every slider at its default unless a test set a
+    WIDGET_OVERRIDES entry for it: the suite is testing that the page
+    renders correctly at the shipped thresholds, not sampling the control
+    surface. value is returned unchanged, tuple or scalar."""
+    value = WIDGET_OVERRIDES.get(label, value)
+    _in_range(label, value, min_value, max_value)
     _rec("slider", label, value)
     return value
 
@@ -153,6 +172,8 @@ def select_slider(label, options=None, value=None, **k):
 
 
 def number_input(label, min_value=None, max_value=None, value=None, step=None, **k):
+    value = WIDGET_OVERRIDES.get(label, value)
+    _in_range(label, value, min_value, max_value)
     _rec("number_input", label, value)
     return value
 

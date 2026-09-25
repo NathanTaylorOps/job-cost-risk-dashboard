@@ -49,27 +49,47 @@ def test_band_for_handles_open_ended_top_band():
     assert det._band_for(0.0, det.PCT_BANDS) == "NONE"
 
 
-def test_threshold_override_file(tmp_path, monkeypatch):
+def test_threshold_override_file(tmp_path):
     """config/thresholds.json overrides constants; bands accept null for an
-    open top; unknown keys are rejected rather than silently ignored."""
+    open top; unknown keys are rejected rather than silently ignored; and
+    none of it touches the module -- the file builds a Thresholds."""
     cfg = tmp_path / "thresholds.json"
     cfg.write_text(json.dumps({
         "_comment": "ignored",
         "DOLLAR_FLOOR": 9_000,
         "PCT_BANDS": {"LOW": [0.05, 0.15], "MEDIUM": [0.15, 0.30], "HIGH": [0.30, None]},
     }))
-    original_floor, original_bands = det.DOLLAR_FLOOR, dict(det.PCT_BANDS)
-    try:
-        applied = det.load_thresholds(str(cfg))
-        assert set(applied) == {"DOLLAR_FLOOR", "PCT_BANDS"}
-        assert det.DOLLAR_FLOOR == 9_000
-        assert det.PCT_BANDS["HIGH"] == (0.30, float("inf"))
-        assert det.pct_severity(0.07) == "LOW"
-        cfg.write_text(json.dumps({"NOT_A_THRESHOLD": 1}))
-        with pytest.raises(KeyError):
-            det.load_thresholds(str(cfg))
-    finally:
-        det.DOLLAR_FLOOR, det.PCT_BANDS = original_floor, original_bands
+    loaded = det.load_thresholds(str(cfg))
+    assert loaded.dollar_floor == 9_000
+    assert loaded.pct_bands["HIGH"] == (0.30, float("inf"))
+    assert det.pct_severity(0.07, loaded) == "LOW"
+    assert det.pct_severity(0.07) == "NONE"                 # the defaults did not move
+    assert det.DOLLAR_FLOOR == 5_000 and det.DEFAULT_THRESHOLDS.dollar_floor == 5_000
+    cfg.write_text(json.dumps({"NOT_A_THRESHOLD": 1}))
+    with pytest.raises(KeyError):
+        det.load_thresholds(str(cfg))
+    assert det.load_thresholds(str(tmp_path / "missing.json")) == det.Thresholds()
+
+
+def test_threshold_overrides_are_validated_on_the_way_in():
+    """A band that loads but is malformed would crash on the first flag
+    instead of at startup, which is the worst place to find out a config
+    file has a typo in it."""
+    t = det.Thresholds()
+    with pytest.raises(ValueError):
+        t.with_overrides({"PCT_BANDS": {"LOW": [0.10, 0.10]}})          # empty band
+    with pytest.raises(ValueError):
+        t.with_overrides({"PCT_BANDS": {"LOW": [0.10, 0.25]}})          # gap against MEDIUM
+    with pytest.raises(ValueError):
+        t.with_overrides({"DOLLAR_FLOOR": -1})
+    with pytest.raises(TypeError):
+        t.with_overrides({"DOLLAR_FLOOR": "5000"})
+    with pytest.raises(TypeError):
+        t.with_overrides({"PCT_BANDS": 0.2})
+    # A partial band override merges over the rest.
+    merged = t.with_overrides({"PCT_BANDS": {"HIGH": [0.35, "inf"]}})
+    assert merged.pct_bands == det.PCT_BANDS
+    assert merged.co_aging_threshold_days == det.CO_AGING_THRESHOLD_DAYS
 
 
 # ---------------------------------------------------------------------------
@@ -1480,47 +1500,61 @@ def test_thresholds_the_readme_quotes_are_pinned_to_their_values():
     assert det.ALLOWANCE_DOLLAR_FLOOR == 2_500
 
 
-def test_set_thresholds_actually_changes_what_gets_flagged(data):
+def test_thresholds_passed_in_actually_change_what_gets_flagged(data):
     """The dashboard's sidebar sliders are only honest if moving one
     changes what the page shows, not just what a constant equals. Raising
     the materiality floor past a real flag's exposure has to make that
-    flag disappear, and set_thresholds() has to be reversible -- a
-    Streamlit rerun calls it on every interaction, so a slider dragged
-    back down must not leave the previous rerun's tightening behind."""
+    flag disappear -- and only for the caller holding that Thresholds."""
     baseline = det.detect_cost_anomalies(data)
     assert baseline, "fixture has no cost flags to test against"
     target = max(baseline, key=lambda f: abs(f.variance_amount))
     just_above = abs(target.variance_amount) + 1.0
 
-    try:
-        det.set_thresholds({"DOLLAR_FLOOR": just_above})
-        tightened = det.detect_cost_anomalies(data)
-        assert not any(
-            f.project_id == target.project_id and f.code == target.code and f.kind == target.kind
-            for f in tightened
-        ), "raising the floor past this flag's exposure should have cleared it"
-
-        det.set_thresholds({})  # a no-op override set, same as every slider left at default
-        restored = det.detect_cost_anomalies(data)
-        assert len(restored) == len(baseline), "set_thresholds({}) did not fully reset prior overrides"
-    finally:
-        det.reset_thresholds()
+    tight = det.DEFAULT_THRESHOLDS.with_overrides({"DOLLAR_FLOOR": just_above})
+    tightened = det.detect_cost_anomalies(data, tight)
+    assert not any(
+        f.project_id == target.project_id and f.code == target.code and f.kind == target.kind
+        for f in tightened
+    ), "raising the floor past this flag's exposure should have cleared it"
+    assert len(det.detect_cost_anomalies(data)) == len(baseline)
+    assert len(det.detect_cost_anomalies(data, det.DEFAULT_THRESHOLDS.with_overrides({}))) == len(baseline)
 
 
-def test_reset_thresholds_restores_the_deployed_defaults(data):
-    """reset_thresholds() is what a fresh Streamlit rerun effectively
-    starts from every time set_thresholds() is called; if it left drift
-    behind, every threshold in the app would slowly ratchet across a
-    session instead of reflecting only the sliders' current position."""
-    before = {k: det.__dict__[k] for k in det._OVERRIDABLE}
-    try:
-        det.set_thresholds({
-            "DOLLAR_FLOOR": 1_234.0,
-            "CO_AGING_DAYS_BANDS": {"LOW": (5, 10), "MEDIUM": (10, 20), "HIGH": (20, float("inf"))},
-        })
-        assert det.DOLLAR_FLOOR == 1_234.0
-        det.reset_thresholds()
-        after = {k: det.__dict__[k] for k in det._OVERRIDABLE}
-        assert after == before
-    finally:
-        det.reset_thresholds()
+def test_two_threshold_sets_do_not_interfere(data):
+    """Streamlit runs every viewer as a thread in one process. Two viewers
+    with two slider positions have to get two answers, at the same time,
+    without either one moving the module's defaults: thresholds are
+    values handed down, not state written up."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    loose = det.DEFAULT_THRESHOLDS
+    tight = loose.with_overrides({
+        "DOLLAR_FLOOR": 20_000.0,
+        "CO_AGING_DAYS_BANDS": {"LOW": (5, 10), "MEDIUM": (10, 20), "HIGH": (20, None)},
+    })
+    assert loose.dollar_floor == 5_000 and tight.dollar_floor == 20_000
+    assert loose.co_aging_days_bands == det.CO_AGING_DAYS_BANDS      # untouched by the override
+    assert tight.co_aging_threshold_days == 5
+    # Frozen, and its tables are its own: nothing a holder does to one
+    # instance can leak into another.
+    with pytest.raises(AttributeError):
+        tight.dollar_floor = 1
+    tight.pct_bands["LOW"] = (0.0, 0.2)
+    assert loose.pct_bands["LOW"] == (0.10, 0.20)
+
+    loose_cost = det.detect_cost_anomalies(data, loose)
+    tight_cost = det.detect_cost_anomalies(data, tight)
+    assert len(tight_cost) < len(loose_cost)
+    loose_co = det.detect_co_aging(data, thresholds=loose)
+    tight_co = det.detect_co_aging(data, thresholds=tight)
+    assert len(tight_co) > len(loose_co)
+
+    def run(t):
+        return (len(det.detect_cost_anomalies(data, t)), len(det.detect_co_aging(data, thresholds=t)),
+                det.portfolio_rollup(data, thresholds=t)["overall_severity"].tolist())
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        results = list(pool.map(run, [loose, tight] * 4))
+    assert all(r == results[0] for r in results[0::2])
+    assert all(r == results[1] for r in results[1::2])
+    assert results[0] != results[1]
+    assert det.DEFAULT_THRESHOLDS == det.Thresholds() and det.DOLLAR_FLOOR == 5_000

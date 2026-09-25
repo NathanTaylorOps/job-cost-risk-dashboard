@@ -24,7 +24,7 @@ import json
 import os
 import subprocess
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field, fields, replace
 from datetime import date
 
 import numpy as np
@@ -240,82 +240,133 @@ def _validate_bands(key: str, bands: dict) -> None:
         )
 
 
-def apply_overrides(overrides: dict) -> dict:
-    """Validate and apply a dict of threshold overrides to this module's
-    globals -- the same shape load_thresholds() reads from a JSON file.
-    Returns what was applied.
-
-    Split out of load_thresholds() so the dashboard's live threshold panel
-    can call it directly with values built from sidebar sliders rather than
-    round-tripping them through a file on disk."""
-    applied = {}
-    for key, value in overrides.items():
-        if key.startswith("_"):
-            continue   # comments
-        if key not in _OVERRIDABLE:
-            raise KeyError(f"{key} is not a threshold that can be overridden")
-        current = globals()[key]
-        if isinstance(current, dict) and isinstance(value, dict):
-            merged = dict(current)
-            merged.update(_parse_bands(key, value))
-            value = merged
-        elif isinstance(current, dict) != isinstance(value, dict):
+def _validated_override(key: str, current, value):
+    """Check one override against the value it replaces -- same shape,
+    numbers where numbers are expected, bands complete and contiguous --
+    and return the value to store. A dict override merges over the
+    current dict, so a file that sets only PCT_BANDS.HIGH keeps the other
+    two bands."""
+    if key not in _OVERRIDABLE:
+        raise KeyError(f"{key} is not a threshold that can be overridden")
+    if isinstance(current, dict) and isinstance(value, dict):
+        merged = dict(current)
+        merged.update(_parse_bands(key, value))
+        value = merged
+    elif isinstance(current, dict) != isinstance(value, dict):
+        raise TypeError(f"{key}: expected {type(current).__name__}, got {type(value).__name__}")
+    elif isinstance(current, bool) or not isinstance(current, (int, float)):
+        if not isinstance(value, type(current)):
             raise TypeError(f"{key}: expected {type(current).__name__}, got {type(value).__name__}")
-        elif isinstance(current, bool) or not isinstance(current, (int, float)):
-            if not isinstance(value, type(current)):
-                raise TypeError(f"{key}: expected {type(current).__name__}, got {type(value).__name__}")
-        else:
-            if isinstance(value, bool) or not isinstance(value, (int, float)):
-                raise TypeError(f"{key}: expected a number, got {type(value).__name__}")
-            if value < 0:
-                raise ValueError(f"{key}: must not be negative, got {value}")
-        if key.endswith("_BANDS"):
-            _validate_bands(key, value)
-        globals()[key] = value
-        applied[key] = value
-    # Derived gates that must stay in step with the bands they read from.
-    globals()["CO_AGING_THRESHOLD_DAYS"] = CO_AGING_DAYS_BANDS["LOW"][0]
-    return applied
+    else:
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise TypeError(f"{key}: expected a number, got {type(value).__name__}")
+        if value < 0:
+            raise ValueError(f"{key}: must not be negative, got {value}")
+    if key.endswith("_BANDS"):
+        _validate_bands(key, value)
+    return value
 
 
-def load_thresholds(path: str = CONFIG_PATH) -> dict:
-    """Apply threshold overrides from a JSON file, if it exists. Keys are
-    the constant names above; bands are {"LOW": [lo, hi], ...} with null
-    for an open top. Returns what was applied. Called at import."""
+@dataclass(frozen=True)
+class Thresholds:
+    """One complete set of thresholds, fixed once built.
+
+    The constants above are the shipped defaults and where the reasoning
+    lives; an instance of this class is what every detector reads. The
+    split matters because Streamlit runs every viewer of the dashboard as
+    a thread in one process: a threshold held in a module global is
+    shared by all of them, so one viewer dragging a slider would move
+    another viewer's flags mid-read. Each session builds its own instance
+    from its own sliders and hands it down, and nothing here is ever
+    written back to the module.
+
+    Field names are the constant names in lower case, so an override file
+    or the sidebar can address a threshold by its documented name."""
+
+    dollar_floor: float = DOLLAR_FLOOR
+    materiality_pct_of_contract: dict = field(default_factory=lambda: dict(MATERIALITY_PCT_OF_CONTRACT))
+    budget_drift_dollar_floor: float = BUDGET_DRIFT_DOLLAR_FLOOR
+    allowance_dollar_floor: float = ALLOWANCE_DOLLAR_FLOOR
+    large_draw_share: float = LARGE_DRAW_SHARE
+    duplicate_window_days: int = DUPLICATE_WINDOW_DAYS
+    pct_bands: dict = field(default_factory=lambda: dict(PCT_BANDS))
+    under_pace_pct: float = UNDER_PACE_PCT
+    under_pace_min_progress: float = UNDER_PACE_MIN_PROGRESS
+    evm_gap_bands: dict = field(default_factory=lambda: dict(EVM_GAP_BANDS))
+    slip_days_bands: dict = field(default_factory=lambda: dict(SLIP_DAYS_BANDS))
+    co_aging_days_bands: dict = field(default_factory=lambda: dict(CO_AGING_DAYS_BANDS))
+    selection_overdue_days_bands: dict = field(default_factory=lambda: dict(SELECTION_OVERDUE_DAYS_BANDS))
+    selection_late_grace_days: int = SELECTION_LATE_GRACE_DAYS
+    under_billing_bands: dict = field(default_factory=lambda: dict(UNDER_BILLING_BANDS))
+    over_billing_bands: dict = field(default_factory=lambda: dict(OVER_BILLING_BANDS))
+    margin_erosion_bands: dict = field(default_factory=lambda: dict(MARGIN_EROSION_BANDS))
+    progress_gap_bands: dict = field(default_factory=lambda: dict(PROGRESS_GAP_BANDS))
+    forecast_min_progress: float = FORECAST_MIN_PROGRESS
+    forecast_extrapolation_cap: float = FORECAST_EXTRAPOLATION_CAP
+    forecast_line_complete: float = FORECAST_LINE_COMPLETE
+    dollar_promotion_tiers: dict = field(default_factory=lambda: dict(DOLLAR_PROMOTION_TIERS))
+    unstarted_line_severity: str = UNSTARTED_LINE_SEVERITY
+    compliance_lookahead_days: int = COMPLIANCE_LOOKAHEAD_DAYS
+
+    def __post_init__(self):
+        # Every dict-valued field is this instance's own copy, so two
+        # instances never share a band table however they were built.
+        for f in fields(self):
+            value = getattr(self, f.name)
+            if isinstance(value, dict):
+                object.__setattr__(self, f.name, copy.deepcopy(value))
+
+    @property
+    def co_aging_threshold_days(self) -> float:
+        """The gate for change-order aging is the floor of its LOW band, so
+        lowering the band in a config cannot open a gap where an aged CO
+        scores NONE."""
+        return self.co_aging_days_bands["LOW"][0]
+
+    def as_dict(self) -> dict:
+        """The thresholds keyed by their documented constant names -- the
+        same shape with_overrides() and config/thresholds.json use."""
+        return {name: copy.deepcopy(getattr(self, name.lower())) for name in _OVERRIDABLE}
+
+    def with_overrides(self, overrides: dict) -> "Thresholds":
+        """A new instance with `overrides` applied on top of this one. Keys
+        are the constant names; bands are {"LOW": [lo, hi], ...} with null
+        or "inf" for an open top. Unknown keys and malformed values raise
+        rather than being ignored, because a threshold that silently did
+        not apply is worse than one that was never set."""
+        changes = {}
+        for key, value in overrides.items():
+            if key.startswith("_"):
+                continue   # comments
+            if key not in _OVERRIDABLE:
+                raise KeyError(f"{key} is not a threshold that can be overridden")
+            current = getattr(self, key.lower())
+            changes[key.lower()] = _validated_override(key, current, value)
+        return replace(self, **changes)
+
+
+def load_thresholds(path: str = CONFIG_PATH, base: Thresholds | None = None) -> Thresholds:
+    """The shipped thresholds with the overrides in a JSON file, if it
+    exists, applied on top. Called once at import to build this
+    deployment's DEFAULT_THRESHOLDS; never mutates anything."""
+    base = Thresholds() if base is None else base
     if not os.path.exists(path):
-        return {}
+        return base
     with open(path) as fh:
         overrides = json.load(fh)
-    return apply_overrides(overrides)
+    return base.with_overrides(overrides)
 
 
-load_thresholds()
-
-# Snapshot taken AFTER the file-based load above, so it is this deployment's
-# configured baseline (code defaults plus whatever config/thresholds.json
-# set), not the raw hardcoded numbers. The dashboard's live threshold panel
-# resets to this before applying a fresh set of slider values on every
-# rerun, so turning a slider back down actually moves the band back instead
-# of only ever tightening it against whatever the previous rerun left behind.
-_BASE_DEFAULTS = {k: copy.deepcopy(globals()[k]) for k in _OVERRIDABLE}
+# This deployment's configured baseline: the code defaults plus whatever
+# config/thresholds.json set. Every detector reads this when it is not
+# handed a Thresholds of its own, and the dashboard layers each session's
+# slider values on top of it with with_overrides() -- so a slider dragged
+# back down lands exactly here, not on whatever the previous rerun left.
+DEFAULT_THRESHOLDS = load_thresholds()
 
 
-def reset_thresholds() -> None:
-    """Back to this deployment's configured thresholds (see _BASE_DEFAULTS
-    above)."""
-    for k in _OVERRIDABLE:
-        globals()[k] = copy.deepcopy(_BASE_DEFAULTS[k])
-    globals()["CO_AGING_THRESHOLD_DAYS"] = CO_AGING_DAYS_BANDS["LOW"][0]
-
-
-def set_thresholds(overrides: dict) -> dict:
-    """Reset to the deployment's configured thresholds, then apply
-    `overrides` on top. Intended for a UI that reruns top to bottom on
-    every interaction (Streamlit's model): calling this every rerun with
-    the current slider values keeps the override set idempotent rather
-    than compounding rerun over rerun."""
-    reset_thresholds()
-    return apply_overrides(overrides)
+def _thresholds(thresholds: Thresholds | None) -> Thresholds:
+    return DEFAULT_THRESHOLDS if thresholds is None else thresholds
 
 
 # ---------------------------------------------------------------------------
@@ -389,18 +440,22 @@ def _band_for(value: float, bands: dict) -> str:
     return "NONE"
 
 
-def pct_severity(variance_pct: float) -> str:
-    return _band_for(abs(variance_pct), PCT_BANDS)
+def pct_severity(variance_pct: float, thresholds: Thresholds | None = None) -> str:
+    return _band_for(abs(variance_pct), _thresholds(thresholds).pct_bands)
 
 
-def dollar_floor_for(contract_value: float, project_type: str = "default") -> float:
+def dollar_floor_for(contract_value: float, project_type: str = "default",
+                     thresholds: Thresholds | None = None) -> float:
     """Materiality floor for a project: the larger of the flat floor and a
     share of contract value (share by project type)."""
-    share = MATERIALITY_PCT_OF_CONTRACT.get(project_type, MATERIALITY_PCT_OF_CONTRACT["default"])
-    return max(DOLLAR_FLOOR, share * float(contract_value))
+    t = _thresholds(thresholds)
+    shares = t.materiality_pct_of_contract
+    share = shares.get(project_type, shares["default"])
+    return max(t.dollar_floor, share * float(contract_value))
 
 
-def combined_severity(pct_sev: str, dollar_exposure: float, floor: float = None) -> str:
+def combined_severity(pct_sev: str, dollar_exposure: float, floor: float = None,
+                      thresholds: Thresholds | None = None) -> str:
     """Severity from the percentage and the dollars together, never one
     alone.
 
@@ -411,13 +466,14 @@ def combined_severity(pct_sev: str, dollar_exposure: float, floor: float = None)
     multiples of the floor cannot read below MEDIUM or HIGH respectively,
     so a small percentage swing on a very large line is not buried under
     a large percentage swing on a small one."""
-    floor = DOLLAR_FLOOR if floor is None else floor
+    t = _thresholds(thresholds)
+    floor = t.dollar_floor if floor is None else floor
     if dollar_exposure < floor:
         return "NONE"
     sev = pct_sev
     multiple = dollar_exposure / floor if floor > 0 else float("inf")
     for level in ("HIGH", "MEDIUM"):
-        if multiple >= DOLLAR_PROMOTION_TIERS[level] and SEVERITY_ORDER[sev] < SEVERITY_ORDER[level]:
+        if multiple >= t.dollar_promotion_tiers[level] and SEVERITY_ORDER[sev] < SEVERITY_ORDER[level]:
             return level
     return sev
 
@@ -444,15 +500,17 @@ class AnomalyFlag:
 # ---------------------------------------------------------------------------
 # Duplicate postings (needed by effective_budgets, so defined first)
 # ---------------------------------------------------------------------------
-def detect_duplicate_postings(data: dict, window_days: int = None) -> list:
+def detect_duplicate_postings(data: dict, window_days: int = None,
+                              thresholds: Thresholds | None = None) -> list:
     """Same project, same vendor, same amount, inside a short window: almost
     always the same invoice posted twice, and on a paper ledger it gets
     paid twice. Severity is by dollar amount -- a duplicate is a straight
     loss until it is recovered, so % variance means nothing here."""
-    window_days = DUPLICATE_WINDOW_DAYS if window_days is None else window_days
+    t = _thresholds(thresholds)
+    window_days = t.duplicate_window_days if window_days is None else window_days
     tx = data["cost_transactions"].sort_values("date")
     descriptions = data["cost_codes"].set_index("code")["description"].to_dict()
-    floors = {r["project_id"]: dollar_floor_for(r["contract_value"], r["type"])
+    floors = {r["project_id"]: dollar_floor_for(r["contract_value"], r["type"], t)
               for _, r in data["projects"].iterrows()}
     flags = []
     # Same project, same vendor, same cost code, same amount, inside the
@@ -461,14 +519,14 @@ def detect_duplicate_postings(data: dict, window_days: int = None) -> list:
     # a double payment, and pairing those would put a false accusation in
     # front of a subcontractor.
     for (pid, vendor, code, amount), grp in tx.groupby(["project_id", "vendor", "code", "amount"]):
-        if len(grp) < 2 or amount < floors.get(pid, DOLLAR_FLOOR):
+        if len(grp) < 2 or amount < floors.get(pid, t.dollar_floor):
             continue
         dates = grp["date"].tolist()
         for i in range(1, len(dates)):
             gap = (dates[i] - dates[i - 1]).days
             if gap <= window_days:
                 first, second = grp.iloc[i - 1], grp.iloc[i]
-                sev = "HIGH" if amount >= 3 * floors.get(pid, DOLLAR_FLOOR) else "MEDIUM"
+                sev = "HIGH" if amount >= 3 * floors.get(pid, t.dollar_floor) else "MEDIUM"
                 codes = f"cost code {code} {descriptions.get(code, '')}"
                 flags.append(AnomalyFlag(
                     project_id=pid, code=second["code"], severity=sev,
@@ -487,7 +545,7 @@ def detect_duplicate_postings(data: dict, window_days: int = None) -> list:
 # ---------------------------------------------------------------------------
 # Cost-code level: budgets, commitments, actuals, variance, forecast
 # ---------------------------------------------------------------------------
-def effective_budgets(data: dict) -> pd.DataFrame:
+def effective_budgets(data: dict, thresholds: Thresholds | None = None) -> pd.DataFrame:
     """Per (project, code): current budget, commitment, spend to date,
     expected spend for the line's reported progress, variance, and a
     forecast at completion.
@@ -507,6 +565,7 @@ def effective_budgets(data: dict) -> pd.DataFrame:
     - forecast_at_completion per code: the larger of current budget and
       commitment, or the spend extrapolated over progress once the line is
       far enough along to trust that (capped)."""
+    t = _thresholds(thresholds)
     tx = data["cost_transactions"]
     budgets = data["project_budgets"]
     projects = data["projects"]
@@ -531,7 +590,7 @@ def effective_budgets(data: dict) -> pd.DataFrame:
 
     spend = tx.groupby(["project_id", "code"])["amount"].sum().rename("ledger_spend").reset_index()
     dup_totals = {}
-    for f in detect_duplicate_postings(data):
+    for f in detect_duplicate_postings(data, thresholds=t):
         dup_totals[(f.project_id, f.code)] = dup_totals.get((f.project_id, f.code), 0.0) + f.variance_amount
     approved = (
         cos[cos["approved_date"].notna()]
@@ -575,7 +634,8 @@ def effective_budgets(data: dict) -> pd.DataFrame:
     safe = np.where(expected > 0, expected, 1.0)
     m["variance_pct"] = np.where(expected > 0, variance / safe, 0.0)
     m["ledger_variance_pct"] = np.where(expected > 0, (ledger - expected) / safe, 0.0)
-    m["dollar_floor"] = [dollar_floor_for(cv, t) for cv, t in zip(m["contract_value"], m["type"], strict=True)]
+    m["dollar_floor"] = [dollar_floor_for(cv, ptype, t)
+                         for cv, ptype in zip(m["contract_value"], m["type"], strict=True)]
 
     # Forecast at completion per code. While a line is open, the forecast
     # is conservative: the larger of its budget, its commitment, and its
@@ -589,11 +649,11 @@ def effective_budgets(data: dict) -> pd.DataFrame:
     committed = m["commitment_total"].to_numpy(dtype=float)
     unpaid_commitment = np.maximum(committed - m["invoiced_by_sub"].to_numpy(dtype=float), 0.0)
     extrapolated = np.where(
-        progress >= FORECAST_MIN_PROGRESS,
-        np.minimum(spend / np.clip(progress, 1e-9, None), FORECAST_EXTRAPOLATION_CAP * budget),
+        progress >= t.forecast_min_progress,
+        np.minimum(spend / np.clip(progress, 1e-9, None), t.forecast_extrapolation_cap * budget),
         0.0,
     )
-    open_line = progress < FORECAST_LINE_COMPLETE
+    open_line = progress < t.forecast_line_complete
     m["forecast_at_completion"] = np.where(
         open_line,
         np.maximum.reduce([budget, committed, spend, extrapolated]),
@@ -602,30 +662,36 @@ def effective_budgets(data: dict) -> pd.DataFrame:
     return m
 
 
-def large_draws(data: dict, share_of_budget: float = None) -> pd.DataFrame:
+def large_draws(data: dict, share_of_budget: float = None,
+                thresholds: Thresholds | None = None) -> pd.DataFrame:
     """Single transactions that on their own are a large share of the cost
     code's whole budget. Deliberately not a z-score: a cost code on one
     job has two to six draws, and no statistic on n=5 tells you anything a
     builder does not already know from looking at them. Supporting detail
     for a burn-rate flag, never a severity input."""
-    share = LARGE_DRAW_SHARE if share_of_budget is None else share_of_budget
+    t = _thresholds(thresholds)
+    share = t.large_draw_share if share_of_budget is None else share_of_budget
     merged = data["cost_transactions"].merge(data["project_budgets"], on=["project_id", "code"], how="left")
     budget = merged["budgeted_amount"].fillna(0.0).astype(float)
     merged["share"] = np.where(budget > 0, merged["amount"] / budget.where(budget > 0, 1.0), np.inf)
-    big = merged[(merged["share"] >= share) & (merged["amount"] >= DOLLAR_FLOOR)]
+    floors = {r["project_id"]: dollar_floor_for(r["contract_value"], r["type"], t)
+              for _, r in data["projects"].iterrows()}
+    floor = merged["project_id"].map(floors).fillna(t.dollar_floor).astype(float)
+    big = merged[(merged["share"] >= share) & (merged["amount"] >= floor)]
     return big[["project_id", "code", "transaction_id", "vendor", "date", "amount", "share"]]
 
 
-def detect_cost_anomalies(data: dict) -> list:
+def detect_cost_anomalies(data: dict, thresholds: Thresholds | None = None) -> list:
     """Burn-rate flags per cost code (over pace, and under pace at LOW),
     spend on lines reported 0% or carried with no budget, and duplicate
     postings. Severity is the % variance band gated by the project's
     materiality floor; large single draws are named in the explanation as
     detail but never move the severity -- the dollars already did that."""
-    budgets = effective_budgets(data)
+    t = _thresholds(thresholds)
+    budgets = effective_budgets(data, t)
     descriptions = data["cost_codes"].set_index("code")["description"].to_dict()
     draw_counts = data["cost_transactions"].groupby(["project_id", "code"]).size().to_dict()
-    big = large_draws(data)
+    big = large_draws(data, thresholds=t)
     big_by_code = dict(iter(big.groupby(["project_id", "code"]))) if not big.empty else {}
 
     flags = []
@@ -639,7 +705,7 @@ def detect_cost_anomalies(data: dict) -> list:
             draws = draw_counts.get((pid, code), 0)
             if row["unbudgeted"]:
                 flags.append(AnomalyFlag(
-                    pid, code, UNSTARTED_LINE_SEVERITY, row["actual_spend"], float("inf"),
+                    pid, code, t.unstarted_line_severity, row["actual_spend"], float("inf"),
                     kind="unbudgeted",
                     explanation=(
                         f"${row['actual_spend']:,.0f} across {draws} draw{'s' if draws != 1 else ''} "
@@ -649,7 +715,7 @@ def detect_cost_anomalies(data: dict) -> list:
                 ))
             elif row["progress"] <= 0:
                 flags.append(AnomalyFlag(
-                    pid, code, UNSTARTED_LINE_SEVERITY, row["actual_spend"], float("inf"),
+                    pid, code, t.unstarted_line_severity, row["actual_spend"], float("inf"),
                     kind="unstarted",
                     explanation=(
                         f"Cost code {code} ({desc}) on {pid} is reported 0% complete but carries "
@@ -659,7 +725,7 @@ def detect_cost_anomalies(data: dict) -> list:
                 ))
             else:
                 flags.append(AnomalyFlag(
-                    pid, code, UNSTARTED_LINE_SEVERITY, row["actual_spend"], float("inf"),
+                    pid, code, t.unstarted_line_severity, row["actual_spend"], float("inf"),
                     kind="unbudgeted",
                     explanation=(
                         f"Cost code {code} ({desc}) on {pid} is {row['progress']:.0%} complete and "
@@ -670,7 +736,8 @@ def detect_cost_anomalies(data: dict) -> list:
             continue
 
         if variance_pct > 0:
-            sev = combined_severity(pct_severity(variance_pct), exposure, floor=row["dollar_floor"])
+            sev = combined_severity(pct_severity(variance_pct, t), exposure, floor=row["dollar_floor"],
+                                    thresholds=t)
             if sev == "NONE":
                 continue
             explanation = (
@@ -684,12 +751,12 @@ def detect_cost_anomalies(data: dict) -> list:
                 if len(draws) == 1:
                     explanation += (
                         f" One draw, ${biggest['amount']:,.0f} to {biggest['vendor']} on "
-                        f"{biggest['date'].date()}, is over {LARGE_DRAW_SHARE:.0%} of the line's "
+                        f"{biggest['date'].date()}, is over {t.large_draw_share:.0%} of the line's "
                         f"whole budget on its own."
                     )
                 else:
                     explanation += (
-                        f" {len(draws)} draws on this line are each over {LARGE_DRAW_SHARE:.0%} of "
+                        f" {len(draws)} draws on this line are each over {t.large_draw_share:.0%} of "
                         f"its whole budget, the largest ${biggest['amount']:,.0f} to "
                         f"{biggest['vendor']} on {biggest['date'].date()}."
                     )
@@ -700,7 +767,7 @@ def detect_cost_anomalies(data: dict) -> list:
                 )
             flags.append(AnomalyFlag(pid, code, sev, variance_amt, variance_pct, explanation, "burn-rate"))
 
-        elif (variance_pct <= UNDER_PACE_PCT and row["progress"] >= UNDER_PACE_MIN_PROGRESS
+        elif (variance_pct <= t.under_pace_pct and row["progress"] >= t.under_pace_min_progress
               and exposure >= row["dollar_floor"]):
             flags.append(AnomalyFlag(
                 pid, code, "LOW", variance_amt, variance_pct, kind="under-pace",
@@ -713,7 +780,7 @@ def detect_cost_anomalies(data: dict) -> list:
             ))
 
     by_code = budgets.set_index(["project_id", "code"])
-    for dup in detect_duplicate_postings(data):
+    for dup in detect_duplicate_postings(data, thresholds=t):
         if (dup.project_id, dup.code) in by_code.index:
             row = by_code.loc[(dup.project_id, dup.code)]
             dup.explanation += (
@@ -726,7 +793,7 @@ def detect_cost_anomalies(data: dict) -> list:
     return flags
 
 
-def detect_budget_drift(data: dict) -> list:
+def detect_budget_drift(data: dict, thresholds: Thresholds | None = None) -> list:
     """The 'quiet drift' signal: a cost code's budget edited in
     budget_revisions.csv rather than moved by change order. Every flag is
     cross-referenced against the change orders for the same project and
@@ -734,6 +801,7 @@ def detect_budget_drift(data: dict) -> list:
     none at all, part of it (approved or still unsigned), or all of it.
     A budget quietly cut is reported too, at LOW: it is either scope being
     dropped or optimism, and both are worth a question."""
+    t = _thresholds(thresholds)
     budgets = data["project_budgets"]
     revs = data["budget_revisions"]
     cos = data["change_orders"]
@@ -755,7 +823,7 @@ def detect_budget_drift(data: dict) -> list:
         drift_amount = (float(row["revised_amount"]) if no_base and pd.isna(row["drift_amount"])
                         else float(row["drift_amount"]))
         exposure = abs(drift_amount)
-        if exposure < BUDGET_DRIFT_DOLLAR_FLOOR:
+        if exposure < t.budget_drift_dollar_floor:
             continue
         if no_base:
             flags.append(AnomalyFlag(
@@ -768,7 +836,7 @@ def detect_budget_drift(data: dict) -> list:
                 ),
             ))
             continue
-        sev = pct_severity(row["drift_pct"])
+        sev = pct_severity(row["drift_pct"], t)
         if sev == "NONE":
             continue
         desc = descriptions.get(code, code)
@@ -803,12 +871,12 @@ def detect_budget_drift(data: dict) -> list:
                 parts.append(f"{', '.join(pending['co_id'])} submitted and still unsigned, "
                              f"${pending_cost:,.0f} of cost (${pending['amount'].sum():,.0f} to the owner)")
             paper = "Paperwork so far: " + "; ".join(parts) + "."
-            if uncovered > BUDGET_DRIFT_DOLLAR_FLOOR:
+            if uncovered > t.budget_drift_dollar_floor:
                 paper += (
                     f" That leaves ${uncovered:,.0f} of the added cost with no change order at all, "
                     f"cost the owner has not agreed to pay for."
                 )
-            elif uncovered < -BUDGET_DRIFT_DOLLAR_FLOOR:
+            elif uncovered < -t.budget_drift_dollar_floor:
                 paper += " The change orders more than cover the move."
             else:
                 paper += " The change orders cover the move; the budget was edited before the paperwork caught up."
@@ -824,16 +892,17 @@ def detect_budget_drift(data: dict) -> list:
     return flags
 
 
-def detect_commitment_issues(data: dict) -> list:
+def detect_commitment_issues(data: dict, thresholds: Thresholds | None = None) -> list:
     """Two checks on the subs' contracts. Buyout: the contract came in over
     the budget line it was estimated at; the estimator's number was wrong
     or the scope grew, and either way the margin moved before a single
     draw. Over-invoiced: the sub has billed more than its contract plus
     its change orders."""
-    budgets = effective_budgets(data)
+    t = _thresholds(thresholds)
+    budgets = effective_budgets(data, t)
     descriptions = data["cost_codes"].set_index("code")["description"].to_dict()
     revs = data["budget_revisions"].sort_values("date")
-    dups = {(f.project_id, f.code): f.variance_amount for f in detect_duplicate_postings(data)}
+    dups = {(f.project_id, f.code): f.variance_amount for f in detect_duplicate_postings(data, thresholds=t)}
     flags = []
     for _, row in budgets[budgets["committed_amount"] > 0].iterrows():
         pid, code = row["project_id"], row["code"]
@@ -855,7 +924,8 @@ def detect_commitment_issues(data: dict) -> list:
             continue
         buyout_pct = buyout_var / row["original_budget"]
         if buyout_var > 0:
-            sev = combined_severity(pct_severity(buyout_pct), buyout_var, floor=row["dollar_floor"])
+            sev = combined_severity(pct_severity(buyout_pct, t), buyout_var, floor=row["dollar_floor"],
+                                    thresholds=t)
             if sev != "NONE":
                 explanation = (
                     f"Cost code {code} ({desc}) on {pid}: sub contract ${row['committed_amount']:,.0f} "
@@ -871,7 +941,7 @@ def detect_commitment_issues(data: dict) -> list:
                 flags.append(AnomalyFlag(pid, code, sev, buyout_var, buyout_pct, explanation, "buyout"))
 
         over = row["invoiced_by_sub"] - row["commitment_total"]
-        if over >= BUDGET_DRIFT_DOLLAR_FLOOR:
+        if over >= t.budget_drift_dollar_floor:
             explanation = (
                 f"Cost code {code} ({desc}) on {pid}: the sub has invoiced ${row['invoiced_by_sub']:,.0f} "
                 f"against a ${row['commitment_total']:,.0f} contract, ${over:,.0f} with no contract "
@@ -884,21 +954,23 @@ def detect_commitment_issues(data: dict) -> list:
                 )
                 sev = "LOW"   # the duplicate flag carries the exposure
             else:
-                sev = "HIGH" if over >= 3 * DOLLAR_FLOOR else "MEDIUM"
+                sev = "HIGH" if over >= 3 * t.dollar_floor else "MEDIUM"
             flags.append(AnomalyFlag(pid, code, sev, over, 0.0, explanation, "over-invoiced"))
     flags.sort(key=lambda f: (-SEVERITY_ORDER[f.severity], -abs(f.variance_amount)))
     return flags
 
 
 def cross_project_patterns(budgets: pd.DataFrame, min_projects: int = 3,
-                           variance_threshold: float = 0.10) -> pd.DataFrame:
+                           variance_threshold: float = 0.10,
+                           thresholds: Thresholds | None = None) -> pd.DataFrame:
     """A cost division over pace on 3+ distinct projects at once is worth
     checking at the estimating end, not just job by job. On a five-job
     portfolio that is a prompt to look, not a statistical finding. Only
     material variances count."""
+    t = _thresholds(thresholds)
     b = budgets.copy()
     b["division"] = b["code"].str.split("-").str[0]
-    floor = b["dollar_floor"] if "dollar_floor" in b.columns else DOLLAR_FLOOR
+    floor = b["dollar_floor"] if "dollar_floor" in b.columns else t.dollar_floor
     material = (b["variance_pct"] > variance_threshold) & (b["variance_amount"] >= floor)
     div = (
         b[material].groupby("division")
@@ -911,13 +983,15 @@ def cross_project_patterns(budgets: pd.DataFrame, min_projects: int = 3,
 
 
 def detect_cross_project_patterns(data: dict, min_projects: int = 3,
-                                  variance_threshold: float = 0.10) -> list:
-    budgets = effective_budgets(data)
+                                  variance_threshold: float = 0.10,
+                                  thresholds: Thresholds | None = None) -> list:
+    t = _thresholds(thresholds)
+    budgets = effective_budgets(data, t)
     names = data["cost_codes"].drop_duplicates("division").set_index("division")["division_name"].to_dict()
     flags = []
-    for _, row in cross_project_patterns(budgets, min_projects, variance_threshold).iterrows():
+    for _, row in cross_project_patterns(budgets, min_projects, variance_threshold, t).iterrows():
         exposure = abs(row["total_exposure"])
-        sev = combined_severity(pct_severity(row["avg_variance_pct"]), exposure)
+        sev = combined_severity(pct_severity(row["avg_variance_pct"], t), exposure, thresholds=t)
         if sev == "NONE":
             continue
         flags.append(AnomalyFlag(
@@ -949,7 +1023,8 @@ class ScheduleRisk:
     explanation: str
 
 
-def compute_schedule_risk(data: dict, as_of: date | None = None) -> list:
+def compute_schedule_risk(data: dict, as_of: date | None = None,
+                          thresholds: Thresholds | None = None) -> list:
     """SPI and CPI the way a small GC can actually compute them.
 
     Both start from the superintendent's per-line % complete on the
@@ -968,9 +1043,10 @@ def compute_schedule_risk(data: dict, as_of: date | None = None) -> list:
     cost. It is the project-level roll-up of the same burn-rate math the
     cost detector runs per code -- one number per job for the front
     screen, not a second independent signal."""
+    t = _thresholds(thresholds)
     projects = data["projects"]
     milestones = data["schedule_milestones"]
-    budgets = effective_budgets(data)
+    budgets = effective_budgets(data, t)
     as_of_ts = pd.Timestamp(DATASET_AS_OF if as_of is None else as_of)
     epoch = pd.Timestamp("1970-01-01")
 
@@ -1010,8 +1086,8 @@ def compute_schedule_risk(data: dict, as_of: date | None = None) -> list:
         reasons = "; ".join(pm["delay_reason"].dropna().unique()) if len(pm) else ""
 
         gap = max(0.0, 1.0 - spi, 1.0 - cpi)
-        perf_sev = _band_for(gap, EVM_GAP_BANDS) if gap > 0 else "NONE"
-        slip_sev = _band_for(slip, SLIP_DAYS_BANDS) if slip > 0 else "NONE"
+        perf_sev = _band_for(gap, t.evm_gap_bands) if gap > 0 else "NONE"
+        slip_sev = _band_for(slip, t.slip_days_bands) if slip > 0 else "NONE"
         sev = _worst([perf_sev, slip_sev, "MEDIUM" if slip_unknown else "NONE"])
 
         if slip_unknown:
@@ -1056,9 +1132,11 @@ class ChangeOrderAging:
     explanation: str
 
 
-def detect_co_aging(data: dict, as_of: date | None = None) -> list:
+def detect_co_aging(data: dict, as_of: date | None = None,
+                    thresholds: Thresholds | None = None) -> list:
     """Change orders submitted and still unsigned past the threshold. The
     amount is the sell price: what the owner has not yet agreed to pay."""
+    t = _thresholds(thresholds)
     as_of_ts = pd.Timestamp(DATASET_AS_OF if as_of is None else as_of)
     line_pct = data["project_budgets"].set_index(["project_id", "code"])["pct_complete"].to_dict()
     results = []
@@ -1066,14 +1144,14 @@ def detect_co_aging(data: dict, as_of: date | None = None) -> list:
         if pd.notna(row["approved_date"]):
             continue
         days = (as_of_ts - row["submitted_date"]).days
-        if days < CO_AGING_THRESHOLD_DAYS:
+        if days < t.co_aging_threshold_days:
             continue
         # abs(): a credit is money owed back to the owner, and an $85,000
         # credit sitting unsigned for six months is exposure, not admin.
         # Comparing the signed amount put every credit under the floor and
         # capped it at LOW however large or old it was.
-        sev = ("LOW" if abs(row["amount"]) < DOLLAR_FLOOR
-               else _band_for(days, CO_AGING_DAYS_BANDS))
+        sev = ("LOW" if abs(row["amount"]) < t.dollar_floor
+               else _band_for(days, t.co_aging_days_bands))
         started = line_pct.get((row["project_id"], row["code"]), 0) > 0
         tail = ("The work is under way, so it is proceeding on a verbal." if started
                 else "The line has not started, so the scope is committed before the price is.")
@@ -1102,7 +1180,8 @@ class AllowanceFlag:
     explanation: str
 
 
-def detect_allowance_overages(data: dict, as_of: date | None = None) -> list:
+def detect_allowance_overages(data: dict, as_of: date | None = None,
+                              thresholds: Thresholds | None = None) -> list:
     """Two things go wrong with allowances on a custom home, and both are
     self-inflicted loss if nobody is watching:
 
@@ -1118,6 +1197,7 @@ def detect_allowance_overages(data: dict, as_of: date | None = None) -> list:
        three weeks late. A selection still open past its date is scored by
        how late it is; one that was eventually made late is reported at
        LOW so the pattern stays visible."""
+    t = _thresholds(thresholds)
     cos = data["change_orders"]
     as_of_ts = pd.Timestamp(DATASET_AS_OF if as_of is None else as_of)
     flags = []
@@ -1128,7 +1208,7 @@ def detect_allowance_overages(data: dict, as_of: date | None = None) -> list:
                 days = (as_of_ts - row["selection_due"]).days
                 flags.append(AllowanceFlag(
                     row["allowance_id"], pid, code, "Selection overdue", 0.0,
-                    _band_for(days, SELECTION_OVERDUE_DAYS_BANDS),
+                    _band_for(days, t.selection_overdue_days_bands),
                     explanation=(
                         f"{row['description']} on {pid}: owner selection was due "
                         f"{row['selection_due'].date()} and is {days} days late against a "
@@ -1139,7 +1219,7 @@ def detect_allowance_overages(data: dict, as_of: date | None = None) -> list:
             continue
 
         if pd.notna(row["selection_due"]) and pd.notna(row["selection_date"]) \
-                and (row["selection_date"] - row["selection_due"]).days > SELECTION_LATE_GRACE_DAYS:
+                and (row["selection_date"] - row["selection_due"]).days > t.selection_late_grace_days:
             days = (row["selection_date"] - row["selection_due"]).days
             flags.append(AllowanceFlag(
                 row["allowance_id"], pid, code, "Selection late", 0.0, "LOW",
@@ -1150,14 +1230,14 @@ def detect_allowance_overages(data: dict, as_of: date | None = None) -> list:
             ))
 
         overage = row["selected_amount"] - row["allowance_amount"]
-        if overage < ALLOWANCE_DOLLAR_FLOOR:
+        if overage < t.allowance_dollar_floor:
             continue
         # A $0 allowance ("owner to select, TBD") is a real line on a real
         # contract. Everything selected against it is overage, and a
         # percentage of nothing is not a number.
         allowance_amount = float(row["allowance_amount"])
         overage_pct = overage / allowance_amount if allowance_amount > 0 else float("inf")
-        sev = pct_severity(overage_pct)
+        sev = pct_severity(overage_pct, t)
         if sev == "NONE":
             continue
 
@@ -1205,7 +1285,7 @@ class BillingPosition:
     explanation: str
 
 
-def compute_billing_position(data: dict) -> list:
+def compute_billing_position(data: dict, thresholds: Thresholds | None = None) -> list:
     """The WIP schedule's over/under line, on the percentage-of-completion
     basis a builder runs it: revised contract (contract plus approved
     change orders at their sell price) times the reported % complete is
@@ -1214,6 +1294,7 @@ def compute_billing_position(data: dict) -> list:
     WIP earns revenue cost-to-cost instead; compute_cost_forecast shows
     that percentage alongside this one. Retainage is shown because it is
     the part of the billed figure the owner is still holding."""
+    t = _thresholds(thresholds)
     cos = data["change_orders"]
     approved = cos[cos["approved_date"].notna()].groupby("project_id")["amount"].sum()
     results = []
@@ -1228,7 +1309,7 @@ def compute_billing_position(data: dict) -> list:
             # forcing it to zero reads CLEAR, which is exactly backwards on
             # the most common over-billing case there is -- a front-loaded
             # mobilization draw on a job that has not started.
-            sev = _band_for(billed / revised, OVER_BILLING_BANDS) if revised > 0 else "HIGH"
+            sev = _band_for(billed / revised, t.over_billing_bands) if revised > 0 else "HIGH"
             explanation = (
                 f"{pid}: ${billed:,.0f} billed against a ${revised:,.0f} revised contract with "
                 f"nothing earned -- the job is reported 0% complete. Every dollar invoiced is "
@@ -1239,14 +1320,14 @@ def compute_billing_position(data: dict) -> list:
             continue
         gap = under / earned if earned > 0 else 0.0
         if gap > 0:
-            sev = _band_for(gap, UNDER_BILLING_BANDS)
+            sev = _band_for(gap, t.under_billing_bands)
             explanation = (
                 f"{pid}: ${earned:,.0f} earned at {p['pct_complete']}% of a ${revised:,.0f} revised "
                 f"contract, ${billed:,.0f} billed, so ${under:,.0f} ({gap:.1%} of earned) is earned "
                 f"and not yet invoiced. ${p['retainage_held']:,.0f} of the billed figure is held as retainage."
             )
         else:
-            sev = _band_for(-gap, OVER_BILLING_BANDS)
+            sev = _band_for(-gap, t.over_billing_bands)
             explanation = (
                 f"{pid}: ${earned:,.0f} earned at {p['pct_complete']}% of a ${revised:,.0f} revised "
                 f"contract, ${billed:,.0f} billed, so ${-under:,.0f} ({-gap:.1%} of earned) is billed "
@@ -1274,7 +1355,7 @@ class CostForecast:
     explanation: str
 
 
-def compute_cost_forecast(data: dict) -> list:
+def compute_cost_forecast(data: dict, thresholds: Thresholds | None = None) -> list:
     """Forecast at completion per project, from the per-code forecasts in
     effective_budgets (the larger of budget, commitment, and extrapolated
     spend once a code is far enough along). Two things fall out of it:
@@ -1287,7 +1368,8 @@ def compute_cost_forecast(data: dict) -> list:
       points, one of them is wrong -- either the walk is optimistic or the
       forecast is missing cost -- and every SPI, CPI and billing number
       built on the reported figure inherits the error."""
-    budgets = effective_budgets(data)
+    t = _thresholds(thresholds)
+    budgets = effective_budgets(data, t)
     cos = data["change_orders"]
     approved = cos[cos["approved_date"].notna()].groupby("project_id")["amount"].sum()
     results = []
@@ -1304,9 +1386,9 @@ def compute_cost_forecast(data: dict) -> list:
         cost_pct = spend / eac if eac > 0 else 0.0
 
         erosion = target - projected
-        margin_sev = _band_for(erosion, MARGIN_EROSION_BANDS) if erosion > 0 else "NONE"
+        margin_sev = _band_for(erosion, t.margin_erosion_bands) if erosion > 0 else "NONE"
         gap = abs(reported - cost_pct)
-        progress_sev = _band_for(gap, PROGRESS_GAP_BANDS)
+        progress_sev = _band_for(gap, t.progress_gap_bands)
         sev = _worst([margin_sev, progress_sev])
 
         explanation = (
@@ -1343,17 +1425,19 @@ class ComplianceFlag:
     explanation: str
 
 
-def detect_compliance_flags(data: dict, as_of: date | None = None) -> list:
+def detect_compliance_flags(data: dict, as_of: date | None = None,
+                            thresholds: Thresholds | None = None) -> list:
+    t = _thresholds(thresholds)
     as_of_ts = pd.Timestamp(DATASET_AS_OF if as_of is None else as_of)
-    lookahead_ts = as_of_ts + pd.Timedelta(days=COMPLIANCE_LOOKAHEAD_DAYS)
+    lookahead_ts = as_of_ts + pd.Timedelta(days=t.compliance_lookahead_days)
     results = []
     for _, row in data["subcontractors"].iterrows():
         active = _active_projects(row)
         if not active:
             continue
         on_site = ", ".join(active)
-        for field, label in (("insurance_expiry", "Insurance"), ("license_expiry", "License")):
-            expiry = row[field]
+        for column, label in (("insurance_expiry", "Insurance"), ("license_expiry", "License")):
+            expiry = row[column]
             if pd.isna(expiry):
                 continue
             if expiry < as_of_ts:
@@ -1387,18 +1471,21 @@ ROLLUP_COLUMNS = [
 ]
 
 
-def portfolio_rollup(data: dict, as_of: date | None = None) -> pd.DataFrame:
+def portfolio_rollup(data: dict, as_of: date | None = None,
+                     thresholds: Thresholds | None = None) -> pd.DataFrame:
     """One row per project: worst severity across cost (burn-rate, unstarted
     or unbudgeted spend, duplicates, drift, buyout, over-invoicing),
     schedule, CO aging, allowances, billing, forecast (margin and progress
     check) and compliance."""
-    cost_flags = detect_cost_anomalies(data) + detect_budget_drift(data) + detect_commitment_issues(data)
-    sched = {r.project_id: r.severity for r in compute_schedule_risk(data, as_of)}
-    co_aging = detect_co_aging(data, as_of)
-    allowances = detect_allowance_overages(data, as_of)
-    billing = {b.project_id: b.severity for b in compute_billing_position(data)}
-    forecast = {f.project_id: f.severity for f in compute_cost_forecast(data)}
-    compliance = detect_compliance_flags(data, as_of)
+    t = _thresholds(thresholds)
+    cost_flags = (detect_cost_anomalies(data, t) + detect_budget_drift(data, t)
+                  + detect_commitment_issues(data, t))
+    sched = {r.project_id: r.severity for r in compute_schedule_risk(data, as_of, t)}
+    co_aging = detect_co_aging(data, as_of, t)
+    allowances = detect_allowance_overages(data, as_of, t)
+    billing = {b.project_id: b.severity for b in compute_billing_position(data, t)}
+    forecast = {f.project_id: f.severity for f in compute_cost_forecast(data, t)}
+    compliance = detect_compliance_flags(data, as_of, t)
     subs = data["subcontractors"]
 
     rows = []

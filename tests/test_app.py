@@ -22,14 +22,18 @@ sys.path.insert(0, HERE)
 import streamlit_stub  # noqa: E402
 
 
-def run_app(select_index=0):
-    """Execute the dashboard with the stub standing in for Streamlit."""
-    streamlit_stub.reset(select_index)
+def run_app(select_index=0, widget_overrides=None):
+    """Execute the dashboard with the stub standing in for Streamlit.
+    widget_overrides simulates a viewer having moved a control, keyed by
+    its label. The app's globals from the run are left on
+    streamlit_stub.LAST_RUN_GLOBALS for a test that needs to read what
+    the page computed."""
+    streamlit_stub.reset(select_index, widget_overrides)
     sys.modules["streamlit"] = streamlit_stub
     try:
         with warnings.catch_warnings():
             warnings.simplefilter("error")
-            runpy.run_path(APP, run_name="__main__")
+            streamlit_stub.LAST_RUN_GLOBALS = runpy.run_path(APP, run_name="__main__")
     finally:
         sys.modules.pop("streamlit", None)
     return list(streamlit_stub.LOG)
@@ -178,7 +182,7 @@ def test_the_sidebar_carries_all_four_threshold_controls(data):
     the page, in the sidebar, every time."""
     expected = {
         "Materiality floor ($)",
-        "Materiality floor (% of contract)",
+        "Materiality floor (% of contract, residential)",
         "Cost & buyout variance bands (MEDIUM / HIGH start)",
         "Change-order aging (MEDIUM / HIGH start, days unsigned)",
     }
@@ -287,3 +291,58 @@ def test_threshold_methodology_expander_is_in_the_sidebar(data):
     log = run_app(0)
     sidebar_expanders = [p[0] for ctx, kind, p in log if ctx == "sidebar" and kind == "expander"]
     assert any("Where these starting numbers came from" in e for e in sidebar_expanders)
+
+
+VARIANCE_SLIDER = "Cost & buyout variance bands (MEDIUM / HIGH start)"
+MATERIALITY_SLIDER = "Materiality floor (% of contract, residential)"
+
+
+def test_the_variance_slider_at_its_minimum_does_not_crash_the_page(data):
+    """The LOW band opens at 10%. Dragging MEDIUM down to the bottom of the
+    slider used to produce LOW = (0.10, 0.10), an empty band, and the
+    threshold validation then raised on every rerun until the viewer
+    found the slider again. MEDIUM cannot start below 11% now, and if a
+    config ever puts LOW's floor above the slider's bottom the LOW band
+    gives way by a point rather than collapsing."""
+    import detection as det
+    floor = det.DEFAULT_THRESHOLDS.pct_bands["LOW"][0]
+    minimum = int(round(floor * 100)) + 1
+    log = run_app(0, {VARIANCE_SLIDER: (minimum, minimum + 1)})
+    assert "error" not in [k for _, k, _ in log]
+    thresholds = streamlit_stub.LAST_RUN_GLOBALS["thresholds"]
+    low, medium, high = (thresholds.pct_bands[b] for b in ("LOW", "MEDIUM", "HIGH"))
+    assert low[0] < low[1] == medium[0] < medium[1] == high[0]
+    assert low == (pytest.approx(floor), pytest.approx(minimum / 100))
+    # And the app cannot even ask for a value below that minimum: the stub
+    # enforces the widget range the way the real widget does.
+    with pytest.raises(ValueError):
+        run_app(0, {VARIANCE_SLIDER: (minimum - 1, minimum)})
+
+
+def test_the_materiality_slider_moves_every_project_type(data):
+    """The commercial job carries a higher share than the houses. A slider
+    that only rewrote the "default" key left the commercial floor at its
+    shipped 0.35% while the residential one was dragged past it, so the
+    control silently stopped applying to one job in five."""
+    import detection as det
+    base = det.DEFAULT_THRESHOLDS.materiality_pct_of_contract
+    run_app(0, {MATERIALITY_SLIDER: 0.75})
+    shares = streamlit_stub.LAST_RUN_GLOBALS["thresholds"].materiality_pct_of_contract
+    assert shares["default"] == pytest.approx(0.0075)
+    for key, value in base.items():
+        assert shares[key] == pytest.approx(value * 0.0075 / base["default"]), key
+    assert shares["Light Commercial (ground-up)"] > shares["default"]
+
+
+def test_a_viewer_moving_a_slider_does_not_touch_the_module_defaults(data):
+    """Streamlit runs every open tab as a thread in one process. The page
+    builds its thresholds as a private object and never writes them back
+    to the detection module, so one viewer's slider cannot move another
+    viewer's flags."""
+    import detection as det
+    before = det.DEFAULT_THRESHOLDS.as_dict()
+    run_app(0, {"Materiality floor ($)": 25_000, VARIANCE_SLIDER: (50, 60)})
+    session = streamlit_stub.LAST_RUN_GLOBALS["thresholds"]
+    assert session.dollar_floor == 25_000 and session.pct_bands["MEDIUM"] == (0.50, 0.60)
+    assert det.DEFAULT_THRESHOLDS.as_dict() == before
+    assert det.DOLLAR_FLOOR == 5_000 and det.PCT_BANDS["MEDIUM"] == (0.20, 0.35)
