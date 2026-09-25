@@ -2,7 +2,7 @@
 
 [![tests](https://github.com/NathanTaylorOps/job-cost-risk-dashboard/actions/workflows/tests.yml/badge.svg)](https://github.com/NathanTaylorOps/job-cost-risk-dashboard/actions/workflows/tests.yml)
 
-**Live demo:** _(deploy link goes here)_
+**Live demo:** https://job-cost-risk-dashboard.streamlit.app/
 
 One screen for a builder running five jobs at once: which one needs a phone
 call this morning, and why. I run operations at a custom home builder with
