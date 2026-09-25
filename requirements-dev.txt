@@ -1,5 +1,8 @@
 # Test and lint only. Kept out of requirements.txt so a deployment does
-# not install a test runner it will never use.
+# not install a test runner it will never use. Floors are what this suite
+# is written against; ceilings on the next major version are so a future
+# breaking release doesn't turn CI red on a day nothing here changed --
+# the same reasoning requirements.txt gives streamlit its own ceiling for.
 -r requirements.txt
-pytest>=7.4
-ruff>=0.6
+pytest>=7.4,<10
+ruff>=0.6,<1

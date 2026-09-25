@@ -1155,10 +1155,14 @@ def detect_co_aging(data: dict, as_of: date | None = None,
         started = line_pct.get((row["project_id"], row["code"]), 0) > 0
         tail = ("The work is under way, so it is proceeding on a verbal." if started
                 else "The line has not started, so the scope is committed before the price is.")
+        # A credit's amount is negative; "$-85,000" reads as a typo, not a
+        # number. Render it the way a builder would say it out loud.
+        amount_text = (f"${abs(row['amount']):,.0f} credit" if row["amount"] < 0
+                       else f"${row['amount']:,.0f}")
         results.append(ChangeOrderAging(
             row["co_id"], row["project_id"], row["amount"], days, sev,
             explanation=(
-                f"{row['co_id']} on {row['project_id']} (${row['amount']:,.0f}) has been unsigned "
+                f"{row['co_id']} on {row['project_id']} ({amount_text}) has been unsigned "
                 f"for {days} days: \"{row['reason']}\". {tail}"
             ),
         ))

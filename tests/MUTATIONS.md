@@ -12,7 +12,10 @@ twenty-five** of these. The value tests in the second half of
 are killed today.
 
 To re-run the check, apply one mutation and run `pytest tests/ -q`. The
-suite has to go red.
+suite has to go red. `python tests/run_mutations.py` automates exactly
+that for all twenty-five: it patches `src/detection.py` in place, runs the
+one named test, confirms it failed, and restores the original file --
+so this table is a checked fact rather than something to take on faith.
 
 | # | Mutation in `src/detection.py` | Killed by |
 |---|---|---|

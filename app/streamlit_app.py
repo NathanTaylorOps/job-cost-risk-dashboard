@@ -782,7 +782,7 @@ def build_call_list_pdf(rows: list, project_name: str) -> bytes:
     print sheet -- the CSV goes into Excel, this goes in a shirt pocket or
     an inbox that expects an attachment, not a spreadsheet."""
     from reportlab.lib import colors
-    from reportlab.lib.pagesizes import letter
+    from reportlab.lib.pagesizes import A4
     from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
     from reportlab.lib.units import inch
     from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
@@ -790,8 +790,12 @@ def build_call_list_pdf(rows: list, project_name: str) -> bytes:
     styles = getSampleStyleSheet()
     cell = ParagraphStyle("cell", parent=styles["Normal"], fontSize=8.5, leading=11)
     buf = io.BytesIO()
+    # A4, not US Letter: this is a call sheet meant to print cleanly
+    # wherever it's opened, and A4 is the sheet size most of the world
+    # (including where this builder's own crews would print it) actually
+    # loads.
     doc = SimpleDocTemplate(
-        buf, pagesize=letter, topMargin=0.6 * inch, bottomMargin=0.6 * inch,
+        buf, pagesize=A4, topMargin=0.6 * inch, bottomMargin=0.6 * inch,
         leftMargin=0.6 * inch, rightMargin=0.6 * inch,
     )
     story = [
