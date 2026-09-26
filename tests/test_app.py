@@ -114,6 +114,20 @@ def test_no_markdown_payload_is_an_indented_code_block(data):
                 assert not (line.startswith("    ") and line.lstrip().startswith("<")), line
 
 
+def test_the_cost_code_table_is_a_custom_html_table_with_severity_badges(data):
+    """The per-code budget breakdown is the one data table on the page
+    where severity matters enough to earn its own hand-built table with a
+    badge column, instead of a styled dataframe -- and it must never leak
+    a raw missing value the way an unguarded pandas Styler would."""
+    for index in range(5):
+        markdown_payloads = [p[0] for _, kind, p in run_app(index) if kind == "markdown"]
+        table_html = next((t for t in markdown_payloads if 'class="rg-table"' in t), None)
+        assert table_html is not None, f"no rg-table rendered on project index {index}"
+        assert 'class="rg-chip"' in table_html
+        for token in ("nan", "NaT", "NaN", "None", "inf"):
+            assert f">{token}<" not in table_html, f"{token} reached the cost code table"
+
+
 def test_no_table_shows_a_raw_missing_value(data):
     """A pandas frame with gaps renders "nan", "NaT" and "None" straight
     onto the page unless every Styler carries na_rep. An unsigned change
@@ -144,14 +158,16 @@ def test_the_page_is_built_from_bordered_cards(data):
                   for t in markdown_payloads), f"no chart card rendered on project index {index}"
 
 
-def test_the_headline_numbers_sit_in_a_bordered_container(data):
-    """The four metrics are native Streamlit widgets, so they cannot be
-    wrapped in our own HTML card the way a chart or a flag list can; this
-    checks the one place the page relies on Streamlit's own container
-    border instead of ours."""
+def test_the_headline_numbers_sit_in_their_own_kpi_cards(data):
+    """The five headline numbers are hand-built HTML cards (rg-kpi-card),
+    not st.metric, so they carry the same border/radius/shadow system as
+    every other card on the page."""
     for index in range(5):
-        opens = [payload[0] for _, kind, payload in run_app(index) if kind == "container_open"]
-        assert True in opens, f"no bordered container on project index {index}"
+        markdown_payloads = [payload[0] for _, kind, payload in run_app(index) if kind == "markdown"]
+        assert any('class="rg-kpi-row"' in t for t in markdown_payloads), (
+            f"no KPI card row rendered on project index {index}")
+        assert any(t.count('class="rg-kpi-card"') == 5 for t in markdown_payloads), (
+            f"expected 5 KPI cards on project index {index}")
 
 
 def test_every_bordered_container_is_closed(data):
@@ -267,12 +283,13 @@ def test_every_project_manager_shows_up_in_the_pm_rollup(data):
 def test_headline_metrics_include_cash_not_yet_collected(data):
     """Retainage held plus earned-but-unbilled work is real money the job
     does not have yet. It needs its own number, not a mental sum of two
-    other metrics on the same card."""
+    other cards on the same row."""
     for index in range(5):
         log = run_app(index)
-        metric_labels = [p[0] for _, kind, p in log if kind == "metric"]
-        assert any("Cash not yet collected" in lbl for lbl in metric_labels), (
-            f"index {index}: no cash-not-yet-collected metric")
+        markdown_payloads = [p[0] for _, kind, p in log if kind == "markdown"]
+        assert any("Cash not yet collected" in t and 'class="rg-kpi-card"' in t
+                   for t in markdown_payloads), (
+            f"index {index}: no cash-not-yet-collected KPI card")
 
 
 def test_the_portfolio_trend_chart_has_its_own_title(data):
@@ -380,6 +397,26 @@ def _demo_upload_files(drop=(), rewrite=None):
         with open(os.path.join(det.DATA_DIR, name), "rb") as fh:
             out.append(_FakeUpload(name, fh.read()))
     return out
+
+
+def test_the_template_download_matches_the_schema_it_is_generated_from(data):
+    """The blank-template button has to be built from det.REQUIRED_COLUMNS,
+    not a hand-copied list, or the two will eventually drift -- this reads
+    the actual zip bytes the button emits and checks every file and every
+    column against the schema load_data_from_files validates against."""
+    import zipfile
+
+    import detection as det
+
+    log = run_app(0)
+    downloads = [p for ctx, kind, p in log if ctx == "sidebar" and kind == "download_button"]
+    zip_bytes = next(d for _, fname, d in downloads if fname and fname.endswith(".zip"))
+    with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
+        names = set(zf.namelist())
+        assert names == set(det.CSV_FILES)
+        for name in det.CSV_FILES:
+            header = zf.read(name).decode().strip().split(",")
+            assert header == det.REQUIRED_COLUMNS[name], name
 
 
 def test_uploading_a_valid_ledger_replaces_the_demo_dataset(data):

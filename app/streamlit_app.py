@@ -21,6 +21,7 @@ import io
 import os
 import subprocess
 import sys
+import zipfile
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 sys.path.insert(0, os.path.dirname(__file__))
@@ -162,6 +163,42 @@ st.markdown(
      card here only needs to add air around it -- no title of its own. */
   .rg-chart-card { padding: 22px 24px 12px; }
 
+  /* Headline KPI row: five hand-built cards, the same border/radius/shadow
+     as every other card on the page, so the number of jobs a call sheet
+     opens with reads as one design system rather than a native widget
+     dropped in next to hand-built ones. flex-basis, not st.columns'
+     percentage split, so a narrow viewport wraps a card to its own line
+     instead of squeezing five onto one. */
+  .rg-kpi-row { display: flex; flex-wrap: wrap; gap: 14px; margin: 0 0 20px; }
+  .rg-kpi-card { flex: 1 1 180px; border: 1.5px solid var(--rg-border);
+                 border-radius: var(--rg-radius-lg); background: var(--rg-card-bg);
+                 box-shadow: var(--rg-shadow); padding: 16px 18px; }
+  .rg-kpi-label { display: flex; align-items: center; gap: 6px; font-size: 11.5px;
+                  font-weight: 700; text-transform: uppercase; letter-spacing: .05em;
+                  color: var(--rg-ink-2); margin-bottom: 8px; }
+  .rg-kpi-value { font-size: 26px; font-weight: 650; color: var(--rg-ink);
+                  letter-spacing: -.01em; }
+  .rg-kpi-delta, .rg-kpi-sub { font-size: 12px; color: var(--rg-ink-2); margin-top: 3px; }
+  .rg-kpi-row .rg-chip { padding: 1px 8px; font-size: 10.5px; }
+
+  /* A plain HTML table for the one place a data table's severity matters
+     enough to earn a badge instead of a cell background: the per-code
+     budget breakdown. Hairline rows, tabular numerals for the dollar and
+     percent columns, and a horizontal scroller instead of a fixed layout
+     so a long description does not force the page itself to scroll. */
+  .rg-table-wrap { overflow-x: auto; border: 1px solid var(--rg-border-soft);
+                   border-radius: var(--rg-radius-sm); }
+  .rg-table { width: 100%; border-collapse: collapse; font-size: 13px; white-space: nowrap; }
+  .rg-table th { text-align: left; font-size: 11px; font-weight: 700; text-transform: uppercase;
+                 letter-spacing: .04em; color: var(--rg-ink-2); background: #FAFBFC;
+                 padding: 9px 12px; border-bottom: 1px solid var(--rg-border); }
+  .rg-table td { padding: 8px 12px; border-bottom: 1px solid var(--rg-border-soft);
+                 color: var(--rg-ink); white-space: normal; }
+  .rg-table tr:last-child td { border-bottom: none; }
+  .rg-table tr:nth-child(even) td { background: #FAFBFC; }
+  .rg-table td.rg-tbl-num { text-align: right; font-variant-numeric: tabular-nums; }
+  .rg-table td.rg-tbl-code { font-weight: 650; white-space: nowrap; }
+
   /* Flags inside a card read as one list: a hairline between rows instead
      of each line floating in its own margin. */
   .rg-flags .rg-flag { margin: 0; padding: 10px 0; font-size: 14px; line-height: 1.5;
@@ -217,6 +254,8 @@ st.markdown(
     [data-testid="stHorizontalBlock"] [data-testid="stMetric"] {
       padding-bottom: 10px; border-bottom: 1px solid var(--rg-border-soft); margin-bottom: 10px;
     }
+    .rg-kpi-card { flex-basis: 100%; }
+    .rg-table { font-size: 12px; }
   }
 </style>
 """,
@@ -246,6 +285,20 @@ def esc_md(value) -> str:
     not a dollar character when the math rule scans the line -- and the
     browser decodes it in both contexts."""
     return esc(value).replace("$", "&#36;")
+
+
+def build_template_zip() -> bytes:
+    """A blank starter for the upload widget below: one CSV per table, just
+    the header row, generated straight from det.REQUIRED_COLUMNS -- the
+    same dict load_data_from_files validates an upload against -- so this
+    can never drift out of sync with what the app actually reads. Zipped
+    because the uploader takes all 11 files together; a single CSV would
+    not describe a 11-table schema."""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for name in det.CSV_FILES:
+            zf.writestr(name, ",".join(det.REQUIRED_COLUMNS[name]) + "\n")
+    return buf.getvalue()
 
 
 def flag_key(project_id: str, flag) -> str:
@@ -311,6 +364,59 @@ def flags_card(items, title: str = "", subtitle: str = "") -> None:
     )
 
 
+def budget_table_html(rows) -> str:
+    """The per-code budget table as plain HTML rather than a styled
+    dataframe, so the severity column can carry the same badge used
+    everywhere else on the page instead of a cell background color -- the
+    one data table on this page where a reader is scanning for severity,
+    not just numbers.
+
+    rows: dicts with code, description, current_budget, progress,
+    actual_spend, variance_pct, forecast_at_completion, severity. code and
+    description are escaped through esc_md(): on an uploaded ledger they
+    are a visitor's own data, not this app's, and every dollar sign in
+    them has to survive Streamlit's markdown pass the same way a flag's
+    explanation does."""
+    head = "".join(
+        f"<th>{h}</th>" for h in
+        ("Code", "Description", "Budget", "% complete", "Spent", "Variance", "Forecast", "Severity")
+    )
+    body = "".join(
+        "<tr>"
+        f'<td class="rg-tbl-code">{esc_md(r["code"])}</td>'
+        f'<td>{esc_md(r["description"])}</td>'
+        f'<td class="rg-tbl-num">{money_html(r["current_budget"])}</td>'
+        f'<td class="rg-tbl-num">{r["progress"]:.0%}</td>'
+        f'<td class="rg-tbl-num">{money_html(r["actual_spend"])}</td>'
+        f'<td class="rg-tbl-num">{r["variance_pct"]:+.1%}</td>'
+        f'<td class="rg-tbl-num">{money_html(r["forecast_at_completion"])}</td>'
+        f'<td>{severity_badge(r["severity"])}</td>'
+        "</tr>"
+        for r in rows
+    )
+    return f'<div class="rg-table-wrap"><table class="rg-table"><thead><tr>{head}</tr></thead>' \
+           f'<tbody>{body}</tbody></table></div>'
+
+
+def kpi_card(label: str, value: str, severity: str = None, delta: str = "") -> str:
+    """One headline-number card: hand-built HTML rather than st.metric, so
+    the five numbers a GM reads first sit in the same card system -- same
+    border, radius and shadow -- as every other card on the page instead
+    of Streamlit's own metric widget. Severity, where it applies, is the
+    same badge used everywhere else on the page rather than baked into the
+    label text, so the ordinal ladder (fill, not four hues) is consistent
+    across the whole screen."""
+    badge = f" {severity_badge(severity)}" if severity else ""
+    delta_html = f'<div class="rg-kpi-delta">{delta}</div>' if delta else ""
+    return (
+        f'<div class="rg-kpi-card">'
+        f'<div class="rg-kpi-label">{esc(label)}{badge}</div>'
+        f'<div class="rg-kpi-value">{value}</div>'
+        f'{delta_html}'
+        f'</div>'
+    )
+
+
 def chart_card(svg: str) -> None:
     """A chart is already a self-contained SVG frame with its own title;
     the card here only adds the air and the border that make it read as
@@ -351,6 +457,18 @@ with st.sidebar:
     st.divider()
 
     st.markdown("#### Your own data")
+    st.download_button(
+        "Download blank CSV template (11 files, zipped)",
+        data=build_template_zip(),
+        file_name="jobcost_dashboard_template.zip",
+        mime="application/zip",
+        help=(
+            "Every file the uploader below needs, with just the required header "
+            "row -- built straight from the same schema the upload is validated "
+            "against, so it can never fall out of date. Fill in a row per line "
+            "item and upload the 11 files back in."
+        ),
+    )
     uploaded_files = st.file_uploader(
         "Upload your own ledger (11 CSVs)",
         type="csv",
@@ -358,13 +476,15 @@ with st.sidebar:
         help=(
             "Replaces the demo below with your own project ledger, run through the "
             "same detection pipeline. All 11 files are required -- see the README's "
-            "\"Bring your own data\" section for the exact filenames and columns. "
-            "Leave this empty to keep viewing the Ridgeline Custom Homes sample."
+            "\"Bring your own data\" section for the exact filenames and columns, or "
+            "download the blank template above. Leave this empty to keep viewing the "
+            "Ridgeline Custom Homes sample."
         ),
     )
     custom_data, upload_errors = (None, [])
     if uploaded_files:
-        custom_data, upload_errors = det.load_data_from_files({f.name: f for f in uploaded_files})
+        with st.spinner("Validating your upload against the schema..."):
+            custom_data, upload_errors = det.load_data_from_files({f.name: f for f in uploaded_files})
         if upload_errors:
             st.error(
                 "Your files don't match the expected schema, so the demo dataset is "
@@ -378,7 +498,8 @@ if custom_data is not None:
     data = custom_data
 else:
     try:
-        data = load_dataset()
+        with st.spinner("Loading the Ridgeline Custom Homes ledger..."):
+            data = load_dataset()
     except subprocess.CalledProcessError as exc:  # the generator itself failed
         detail = (exc.stderr or b"").decode(errors="replace").strip() or str(exc)
         st.error("The dataset could not be generated.")
@@ -911,38 +1032,37 @@ with st.sidebar:
 
 st.divider()
 
-# The four headline numbers as one bordered unit, native to Streamlit rather
-# than hand-built: st.metric and st.columns cannot be assembled into a raw
-# HTML string the way a chart or a flag list can, so this is the one card
-# on the page that uses Streamlit's own container border instead of ours.
-with st.container(border=True):
-    c1, c2, c3, c4, c5 = st.columns(5)
-    c1.metric("Revised contract", money(bill.revised_contract))
-    c2.metric(
-        f"Projected margin · {SEVERITY_STYLE[fcst.severity]['label']}",
-        f"{fcst.projected_margin_pct:.1%}",
-        delta=f"{(fcst.projected_margin_pct - fcst.target_margin_pct) * 100:+.1f} pts vs. priced",
-        delta_color="off",   # one severity language on this page, not Streamlit's as well
-    )
-    c3.metric(
-        f"Forecast finish · {SEVERITY_STYLE[sched.severity]['label']}",
+# The five headline numbers, as hand-built KPI cards rather than
+# st.metric: the same border/radius/shadow system as every other card on
+# the page, with severity carried by the one badge used everywhere else
+# instead of Streamlit's own (differently-colored) delta arrows.
+_cash_out = max(bill.under_billed, 0) + bill.retainage_held
+_margin_delta = (fcst.projected_margin_pct - fcst.target_margin_pct) * 100
+_kpi_html = '<div class="rg-kpi-row">' + "".join([
+    kpi_card("Revised contract", money_html(bill.revised_contract)),
+    kpi_card(
+        "Projected margin", f"{fcst.projected_margin_pct:.1%}", severity=fcst.severity,
+        delta=f"{_margin_delta:+.1f} pts vs. priced",
+    ),
+    kpi_card(
+        "Forecast finish",
         f"{sched.critical_path_slip_days} days late" if sched.critical_path_slip_days else "On baseline",
-    )
-    c4.metric(
-        f"Billing position · {SEVERITY_STYLE[bill.severity]['label']}",
-        ("+" if bill.under_billed >= 0 else "−") + money(abs(bill.under_billed)),
-    )
-    _cash_out = max(bill.under_billed, 0) + bill.retainage_held
-    c5.metric(
-        "Cash not yet collected",
-        money(_cash_out),
-    )
-    st.caption(
-        "Billing position is positive when the job has earned more than it has "
-        "invoiced. Margin is against the priced margin, in points. Cash not yet "
-        f"collected is retainage held (${bill.retainage_held:,.0f}) plus any earned, "
-        "unbilled work -- real money owed to the job, just not in the bank."
-    )
+        severity=sched.severity,
+    ),
+    kpi_card(
+        "Billing position",
+        ("+" if bill.under_billed >= 0 else "&minus;") + money_html(abs(bill.under_billed)),
+        severity=bill.severity,
+    ),
+    kpi_card("Cash not yet collected", money_html(_cash_out)),
+]) + '</div>'
+st.markdown(_kpi_html, unsafe_allow_html=True)
+st.caption(
+    "Billing position is positive when the job has earned more than it has "
+    "invoiced. Margin is against the priced margin, in points. Cash not yet "
+    f"collected is retainage held ({money_html(bill.retainage_held)}) plus any earned, "
+    "unbilled work -- real money owed to the job, just not in the bank."
+)
 
 cost_items = [f for f in results["cost_flags"] if f.project_id == selected_pid]
 drift_items = [f for f in results["drift_flags"] if f.project_id == selected_pid]
@@ -988,18 +1108,17 @@ with tab_cost:
     )
 
     with st.expander("Every cost code: budget, progress, spend and forecast"):
-        b = pb[["code", "description", "current_budget", "progress",
-                "actual_spend", "variance_pct", "forecast_at_completion"]]
-        b = b.sort_values("variance_pct", ascending=False, kind="stable").rename(columns={
-            "code": "Code", "description": "Description", "current_budget": "Budget",
-            "progress": "% complete", "actual_spend": "Spent",
-            "variance_pct": "Variance", "forecast_at_completion": "Forecast",
-        })
-        st.dataframe(
-            b.style.format({"Budget": money, "% complete": "{:.0%}", "Spent": money,
-                            "Variance": "{:+.1%}", "Forecast": money}),
-            use_container_width=True, hide_index=True,
-        )
+        b = pb.sort_values("variance_pct", ascending=False, kind="stable")
+        table_rows = [
+            {"code": r["code"],
+             "description": str(r["description"]) if r["description"] == r["description"] else "",
+             "current_budget": float(r["current_budget"]), "progress": float(r["progress"]),
+             "actual_spend": float(r["actual_spend"]), "variance_pct": float(r["variance_pct"]),
+             "forecast_at_completion": float(r["forecast_at_completion"]),
+             "severity": flagged.get(r["code"], "NONE")}
+            for _, r in b.iterrows()
+        ]
+        st.markdown(budget_table_html(table_rows), unsafe_allow_html=True)
 
     with st.expander("Sub contracts: one per trade, with the scopes each one covers"):
         sc = data["commitments"]
