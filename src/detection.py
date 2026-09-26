@@ -1010,6 +1010,25 @@ def detect_cross_project_patterns(data: dict, min_projects: int = 3,
 # ---------------------------------------------------------------------------
 # Schedule risk: SPI / CPI, critical-path slip, weather and other delay
 # ---------------------------------------------------------------------------
+def critical_path_terminal_finish(pm: pd.DataFrame):
+    """The forecast finish date for a single job's milestones.
+
+    Always the terminal (last-by-baseline-date) CRITICAL-PATH milestone,
+    never just the last row or the latest forecast_date across every
+    milestone -- a non-critical milestone (e.g. an early "Interior
+    Finishes Underway" marker) can sort last or carry a later forecast
+    than the job's actual finish, and would otherwise make the chart
+    disagree with compute_schedule_risk's own slip number. Returns None
+    when there is no critical-path schedule, or the terminal milestone
+    has no forecast date yet.
+    """
+    cp = pm[pm["critical_path"] == True]  # noqa: E712
+    if not len(cp):
+        return None
+    term = cp.iloc[-1]["forecast_date"]
+    return None if pd.isna(term) else term
+
+
 @dataclass
 class ScheduleRisk:
     project_id: str

@@ -668,10 +668,11 @@ if _all_dates:
                          for d in _all_dates]
     portfolio_forecast = sum(f.forecast_at_completion for f in results["forecast"])
     portfolio_earned = float(_budgets_all["expected_spend_to_date"].sum())
-    _finish_dates = [data["schedule_milestones"][
-        data["schedule_milestones"]["project_id"] == pid]["forecast_date"].max()
+    _finish_dates = [det.critical_path_terminal_finish(
+        data["schedule_milestones"][data["schedule_milestones"]["project_id"] == pid]
+        .sort_values("baseline_date"))
         for pid in rollup["project_id"]]
-    _finish_dates = [d.date() for d in _finish_dates if d == d]
+    _finish_dates = [d.date() for d in _finish_dates if d is not None]
     portfolio_finish = max(_finish_dates) if _finish_dates else det.DATASET_AS_OF
 
     st.markdown("### Portfolio trend")
@@ -1113,10 +1114,10 @@ with tab_fin:
                 actual_points.append((t["date"].date(), running))
         planned_points = [(r["baseline_date"].date(), float(r["planned_pct_complete"]) * bac)
                           for _, r in ms.iterrows() if r["baseline_date"] == r["baseline_date"]]
-        finish = ms.iloc[-1]["forecast_date"]
+        finish = det.critical_path_terminal_finish(ms)
         chart_card(charts.cost_curve_chart(
             planned_points, actual_points, det.DATASET_AS_OF,
-            finish.date() if finish == finish else det.DATASET_AS_OF,
+            finish.date() if finish is not None else det.DATASET_AS_OF,
             fcst.forecast_at_completion,
             earned=float(pb_p["expected_spend_to_date"].sum()),
             title=f"{short_name(selected_name)}, cost to date against plan",

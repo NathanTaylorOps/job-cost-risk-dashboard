@@ -822,6 +822,48 @@ def test_a_job_with_no_schedule_does_not_read_as_a_job_on_schedule():
     assert det.portfolio_rollup(data).iloc[0]["schedule_severity"] != "NONE"
 
 
+def test_critical_path_finish_ignores_a_later_non_critical_milestone():
+    """The app's charts read the job's finish date off the same terminal
+    critical-path milestone compute_schedule_risk uses for slip -- never
+    the last row by baseline_date and never the latest forecast_date
+    across every milestone, either of which a non-critical marker (added
+    after the real finish, or simply forecast later than it) can win."""
+    pm = pd.DataFrame([
+        {"milestone_id": "M1", "project_id": "PX", "milestone": "Framing",
+         "baseline_date": pd.Timestamp("2025-03-01"), "forecast_date": pd.Timestamp("2025-03-10"),
+         "critical_path": True},
+        {"milestone_id": "M2", "project_id": "PX", "milestone": "Substantial Completion",
+         "baseline_date": pd.Timestamp("2025-06-01"), "forecast_date": pd.Timestamp("2025-06-15"),
+         "critical_path": True},
+        # Sorts last by baseline_date AND carries the latest forecast_date
+        # of any row, but is not on the critical path -- an owner walkthrough
+        # penciled in after closeout, say.
+        {"milestone_id": "M3", "project_id": "PX", "milestone": "Owner Walkthrough",
+         "baseline_date": pd.Timestamp("2025-07-01"), "forecast_date": pd.Timestamp("2025-08-01"),
+         "critical_path": False},
+    ]).sort_values("baseline_date")
+    finish = det.critical_path_terminal_finish(pm)
+    assert finish == pd.Timestamp("2025-06-15")
+    # Both bugs this guards against, made explicit:
+    assert pm.iloc[-1]["forecast_date"] != finish  # last row by baseline_date
+    assert pm["forecast_date"].max() != finish  # max() across every milestone
+
+
+def test_critical_path_finish_is_none_without_a_critical_path_or_a_date():
+    empty_cp = pd.DataFrame([
+        {"milestone_id": "M1", "project_id": "PX", "milestone": "Framing",
+         "baseline_date": pd.Timestamp("2025-03-01"), "forecast_date": pd.Timestamp("2025-03-10"),
+         "critical_path": False},
+    ])
+    assert det.critical_path_terminal_finish(empty_cp) is None
+    no_forecast = pd.DataFrame([
+        {"milestone_id": "M1", "project_id": "PX", "milestone": "Substantial Completion",
+         "baseline_date": pd.Timestamp("2025-03-01"), "forecast_date": None,
+         "critical_path": True},
+    ])
+    assert det.critical_path_terminal_finish(no_forecast) is None
+
+
 def test_load_data_generates_into_the_requested_directory(tmp_path):
     """data/ is not committed; load_data() must build it on first run, in
     the directory it was asked for, without touching the repo's copy."""
