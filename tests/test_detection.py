@@ -11,6 +11,7 @@ coherent (a builder spots incoherent data in seconds), the detector must
 stay quiet on the 200-odd cost codes that are fine, and nothing may fall
 over on empty or edge-case data.
 """
+import io
 import json
 import os
 
@@ -874,6 +875,89 @@ def test_load_data_generates_into_the_requested_directory(tmp_path):
     assert (target / "projects.csv").exists()
     assert len(data["projects"]) == 5
     assert os.stat(repo_copy).st_mtime_ns == before
+
+
+# ---------------------------------------------------------------------------
+# Bring-your-own-data upload path
+# ---------------------------------------------------------------------------
+def _demo_files():
+    """Open every bundled CSV as a fresh file handle, keyed by filename --
+    stands in for what Streamlit's file_uploader hands the app when a
+    visitor picks their own files."""
+    det.ensure_data(det.DATA_DIR)
+    return {name: open(os.path.join(det.DATA_DIR, name), "rb") for name in det.CSV_FILES}
+
+
+def test_load_data_from_files_accepts_the_demo_dataset_as_its_own_upload():
+    """The bundled dataset is itself valid input to the upload path -- the
+    schema the README promises visitors is exactly the schema load_data
+    already produces, checked here so the two can never quietly drift."""
+    files = _demo_files()
+    try:
+        data, errors = det.load_data_from_files(files)
+    finally:
+        for f in files.values():
+            f.close()
+    assert errors == []
+    assert set(data) == {n[:-4] for n in det.CSV_FILES}
+    assert len(data["projects"]) == 5
+    # Dates come back parsed, not as strings, same as load_data.
+    assert pd.api.types.is_datetime64_any_dtype(data["projects"]["start_date"])
+
+
+def test_load_data_from_files_reports_every_missing_file_by_name():
+    files = _demo_files()
+    try:
+        del files["subcontractors.csv"]
+        data, errors = det.load_data_from_files(files)
+    finally:
+        for f in files.values():
+            f.close()
+    assert data is None
+    assert len(errors) == 1 and "subcontractors.csv" in errors[0]
+
+
+def test_load_data_from_files_reports_a_missing_column_by_name_not_a_traceback():
+    files = _demo_files()
+    try:
+        df = pd.read_csv(files["projects.csv"])
+        files["projects.csv"].close()
+        df = df.drop(columns=["contract_value"])
+        files["projects.csv"] = io.StringIO(df.to_csv(index=False))
+        data, errors = det.load_data_from_files(files)
+    finally:
+        for f in files.values():
+            f.close()
+    assert data is None
+    assert any("projects.csv" in e and "contract_value" in e for e in errors)
+
+
+def test_load_data_from_files_rejects_an_unreadable_file_without_raising():
+    """A file that cannot be parsed as a CSV at all is reported by name,
+    not raised -- a visitor sees a message, not a stack trace."""
+    files = _demo_files()
+    try:
+        files["projects.csv"].close()
+        files["projects.csv"] = io.BytesIO(b"\xff\xfe\x01\x02\x03\x04not utf-8 at all")
+        data, errors = det.load_data_from_files(files)
+    finally:
+        for f in files.values():
+            f.close()
+    assert data is None
+    assert any("projects.csv" in e for e in errors)
+
+
+def test_load_data_from_files_rejects_an_empty_load_bearing_table():
+    files = _demo_files()
+    try:
+        files["projects.csv"].close()
+        files["projects.csv"] = io.StringIO(",".join(det.REQUIRED_COLUMNS["projects.csv"]) + "\n")
+        data, errors = det.load_data_from_files(files)
+    finally:
+        for f in files.values():
+            f.close()
+    assert data is None
+    assert any("projects.csv" in e and "no rows" in e for e in errors)
 
 
 def test_generator_and_detector_share_one_as_of_date():

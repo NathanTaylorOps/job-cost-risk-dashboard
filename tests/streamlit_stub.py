@@ -198,6 +198,17 @@ def button(label, **k):
     return False
 
 
+def file_uploader(label, accept_multiple_files=False, key=None, **k):
+    """No file picked by default, same as a real page nobody has touched
+    yet. A test that wants to simulate an upload passes a list of
+    stand-in file objects (each needs a .name and to be readable by
+    pandas.read_csv) through WIDGET_OVERRIDES, keyed by this label."""
+    default = [] if accept_multiple_files else None
+    out = WIDGET_OVERRIDES.get(label, default)
+    _rec("file_uploader", label, out if isinstance(out, list) else bool(out))
+    return out
+
+
 def progress(value, **k):
     _rec("progress", value)
 

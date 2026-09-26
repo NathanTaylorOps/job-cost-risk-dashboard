@@ -336,32 +336,62 @@ def load_dataset():
     return det.load_data()
 
 
-try:
-    data = load_dataset()
-except subprocess.CalledProcessError as exc:  # the generator itself failed
-    detail = (exc.stderr or b"").decode(errors="replace").strip() or str(exc)
-    st.error("The dataset could not be generated.")
-    st.code(detail)
-    st.stop()
-except Exception as exc:  # noqa: BLE001 -- surface any load failure in the page
-    st.error("Could not load the dataset.")
-    st.code(f"{type(exc).__name__}: {exc}")
-    st.stop()
-
-projects = data["projects"].set_index("project_id")
-
 # ---------------------------------------------------------------------------
 # SIDEBAR -- thresholds and the portfolio filter live here, above the fold,
 # so the page reads as an app shell with working controls rather than a
 # single static column. The call list further down adds to this same
 # sidebar in the order the script reaches it; Streamlit stacks sidebar
-# calls in call order regardless of where in the script they happen.
+# calls in call order regardless of where in the script they happen. The
+# upload widget is read first, because it decides which dataset every
+# other control below runs against.
 # ---------------------------------------------------------------------------
 with st.sidebar:
     st.markdown("### Ridgeline Custom Homes")
     st.caption("Job-cost & schedule-risk dashboard")
     st.divider()
 
+    st.markdown("#### Your own data")
+    uploaded_files = st.file_uploader(
+        "Upload your own ledger (11 CSVs)",
+        type="csv",
+        accept_multiple_files=True,
+        help=(
+            "Replaces the demo below with your own project ledger, run through the "
+            "same detection pipeline. All 11 files are required -- see the README's "
+            "\"Bring your own data\" section for the exact filenames and columns. "
+            "Leave this empty to keep viewing the Ridgeline Custom Homes sample."
+        ),
+    )
+    custom_data, upload_errors = (None, [])
+    if uploaded_files:
+        custom_data, upload_errors = det.load_data_from_files({f.name: f for f in uploaded_files})
+        if upload_errors:
+            st.error(
+                "Your files don't match the expected schema, so the demo dataset is "
+                "still showing below:\n\n" + "\n".join(f"- {e}" for e in upload_errors)
+            )
+        else:
+            st.success(f"Showing your data ({len(uploaded_files)} file(s) loaded).")
+    st.divider()
+
+if custom_data is not None:
+    data = custom_data
+else:
+    try:
+        data = load_dataset()
+    except subprocess.CalledProcessError as exc:  # the generator itself failed
+        detail = (exc.stderr or b"").decode(errors="replace").strip() or str(exc)
+        st.error("The dataset could not be generated.")
+        st.code(detail)
+        st.stop()
+    except Exception as exc:  # noqa: BLE001 -- surface any load failure in the page
+        st.error("Could not load the dataset.")
+        st.code(f"{type(exc).__name__}: {exc}")
+        st.stop()
+
+projects = data["projects"].set_index("project_id")
+
+with st.sidebar:
     st.markdown("#### Thresholds")
     st.caption(
         "These four move the needle most on a five-job portfolio. Fine "

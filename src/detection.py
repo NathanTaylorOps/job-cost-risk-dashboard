@@ -186,6 +186,72 @@ CSV_FILES = [
     "commitment_lines.csv", "cost_transactions.csv", "subcontractors.csv",
 ]
 
+# Every column each table must carry for the detection pipeline to run --
+# this is the schema a real visitor's own ledger has to match to replace
+# the synthetic dataset (see load_data_from_files below and the README's
+# "Bring your own data" section, which is generated from this dict so the
+# two cannot drift). Extra columns in an uploaded file are ignored; a
+# missing one is reported by name rather than surfacing as a KeyError deep
+# in a detector.
+REQUIRED_COLUMNS = {
+    "projects.csv": [
+        "project_id", "name", "type", "finish_tier", "contract_value", "margin_pct",
+        "square_feet", "start_date", "end_date", "retainage_pct", "status",
+        "project_manager", "float_days", "pct_complete", "billed_to_date", "retainage_held",
+    ],
+    "cost_codes.csv": [
+        "code", "division", "division_name", "description", "typical_share_of_division",
+        "phase_start", "phase_end", "trade", "supplier", "gc_buys_material",
+    ],
+    "project_budgets.csv": [
+        "project_id", "code", "budgeted_amount", "approved_co_cost", "current_budget",
+        "pct_complete",
+    ],
+    "budget_revisions.csv": ["revision_id", "project_id", "code", "revised_amount", "date", "reason"],
+    "schedule_milestones.csv": [
+        "milestone_id", "project_id", "milestone", "baseline_date", "forecast_date",
+        "actual_date", "critical_path", "weather_exposed", "weather_delay_days",
+        "other_delay_days", "delay_reason", "planned_pct_complete",
+    ],
+    "allowances.csv": [
+        "allowance_id", "project_id", "code", "description", "allowance_amount",
+        "selected_amount", "selection_due", "selection_date",
+    ],
+    "change_orders.csv": [
+        "co_id", "project_id", "code", "cost_amount", "amount", "submitted_date",
+        "approved_date", "time_extension_days", "reason", "allowance_id",
+    ],
+    "commitments.csv": [
+        "commitment_id", "project_id", "sub_id", "sub_name", "trade", "contract_amount",
+        "commitment_type", "scope_lines", "co_amount", "signed_date", "retention_pct",
+        "invoiced_to_date", "retention_held", "retention_released", "paid_to_date",
+    ],
+    "commitment_lines.csv": [
+        "commitment_id", "project_id", "code", "sub_id", "sub_name", "line_amount",
+        "co_amount", "invoiced_to_date",
+    ],
+    "cost_transactions.csv": ["transaction_id", "project_id", "code", "date", "amount", "vendor", "type"],
+    "subcontractors.csv": [
+        "sub_id", "name", "trade", "insurance_expiry", "license_expiry", "active_projects",
+    ],
+}
+
+# Date columns per table, parsed the same way whether the table came from
+# the bundled generator or an uploaded file -- kept as one dict so
+# load_data and load_data_from_files can never disagree on which columns
+# are dates.
+DATE_COLUMNS = {
+    "projects.csv": ["start_date", "end_date"],
+    "budget_revisions.csv": ["date"],
+    "schedule_milestones.csv": ["baseline_date", "forecast_date", "actual_date"],
+    "allowances.csv": ["selection_due", "selection_date"],
+    "change_orders.csv": ["submitted_date", "approved_date"],
+    "commitments.csv": ["signed_date"],
+    "cost_transactions.csv": ["date"],
+    "subcontractors.csv": ["insurance_expiry", "license_expiry"],
+}
+DTYPE_OVERRIDES = {"cost_codes.csv": {"division": str}}
+
 _OVERRIDABLE = [
     "DOLLAR_FLOOR", "MATERIALITY_PCT_OF_CONTRACT", "BUDGET_DRIFT_DOLLAR_FLOOR",
     "ALLOWANCE_DOLLAR_FLOOR", "LARGE_DRAW_SHARE", "DUPLICATE_WINDOW_DAYS", "PCT_BANDS",
@@ -385,6 +451,66 @@ def ensure_data(data_dir: str = DATA_DIR) -> None:
              and os.path.getmtime(GENERATOR) > min(os.path.getmtime(p) for p in paths))
     if missing or stale:
         subprocess.run([sys.executable, GENERATOR, data_dir], check=True, capture_output=True)
+
+
+def parse_uploaded_table(name: str, raw) -> pd.DataFrame:
+    """Read one uploaded CSV (name is one of CSV_FILES) the same way
+    load_data reads the bundled one: same dtype override, same date
+    columns parsed the same way. raw is anything pandas.read_csv accepts
+    -- a path, a file-like object, or Streamlit's UploadedFile."""
+    df = pd.read_csv(raw, dtype=DTYPE_OVERRIDES.get(name))
+    for c in DATE_COLUMNS.get(name, []):
+        if c in df.columns:
+            df[c] = pd.to_datetime(df[c], errors="coerce")
+    return df
+
+
+def load_data_from_files(files: dict) -> tuple[dict | None, list]:
+    """Validate and load a visitor's own project ledger in place of the
+    synthetic dataset.
+
+    files: dict of {csv filename (e.g. "projects.csv"): file-like object},
+    as a Streamlit multi-file uploader hands back. Returns (data, []) --
+    the same dict-of-DataFrames shape load_data returns, ready for every
+    detector in this module -- on success, or (None, errors) with one
+    plain-English line per problem on failure. Never raises: a malformed
+    upload is a message on the page, not a stack trace.
+    """
+    errors = []
+    missing_files = [f for f in CSV_FILES if f not in files]
+    if missing_files:
+        errors.append(
+            "Missing file(s): " + ", ".join(missing_files) + ". All 11 CSVs are "
+            "required -- see the README's \"Bring your own data\" section for the "
+            "expected filenames and columns."
+        )
+        return None, errors
+
+    parsed = {}
+    for name in CSV_FILES:
+        try:
+            df = parse_uploaded_table(name, files[name])
+        except Exception as exc:  # noqa: BLE001 -- report it, never raise it
+            errors.append(f"{name}: could not be read as a CSV ({exc}).")
+            continue
+        missing_cols = [c for c in REQUIRED_COLUMNS[name] if c not in df.columns]
+        if missing_cols:
+            errors.append(f"{name}: missing column(s) {', '.join(missing_cols)}.")
+            continue
+        parsed[name] = df
+    if errors:
+        return None, errors
+
+    # These three are load-bearing for every detector below; an empty one
+    # would not crash, it would just make the whole dashboard look silently
+    # blank, which is worse than telling the visitor what to fix.
+    for name in ("projects.csv", "cost_codes.csv", "project_budgets.csv"):
+        if parsed[name].empty:
+            errors.append(f"{name}: has no rows. At least one is required.")
+    if errors:
+        return None, errors
+
+    return {name[:-4]: df for name, df in parsed.items()}, []
 
 
 def load_data(data_dir: str = DATA_DIR) -> dict:

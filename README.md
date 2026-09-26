@@ -160,6 +160,46 @@ detection pass the moment it changes.
 - **It works on a phone.** The layout collapses to one column under about
   768px, because a call list is exactly the kind of thing that gets
   opened standing in a driveway.
+- **Bring your own data.** The sidebar's uploader replaces Ridgeline
+  Custom Homes with your own portfolio and runs it through the same
+  detection pipeline -- see "Bring your own data" below for the schema.
+
+## Bring your own data
+
+Everything on this page runs against the sample dataset until you upload
+your own. The sidebar's "Upload your own ledger" widget takes all 11 CSVs
+at once (select them together in the file picker); as soon as every file
+validates, the whole dashboard -- thresholds, charts, the call list --
+switches to your data. Remove the upload and it falls back to the demo.
+
+The schema below is exactly what [`src/detection.py`](src/detection.py)
+reads and what [`src/generate_data.py`](src/generate_data.py) produces, so
+the fastest way to build a valid upload is to open one of the generated
+files in `data/` (run the app once to create it) and match its columns.
+Extra columns are ignored; a missing one is reported by name instead of
+crashing the page, and `projects.csv`, `cost_codes.csv` and
+`project_budgets.csv` need at least one row.
+
+| File | Required columns |
+| --- | --- |
+| `projects.csv` | `project_id, name, type, finish_tier, contract_value, margin_pct, square_feet, start_date, end_date, retainage_pct, status, project_manager, float_days, pct_complete, billed_to_date, retainage_held` |
+| `cost_codes.csv` | `code, division, division_name, description, typical_share_of_division, phase_start, phase_end, trade, supplier, gc_buys_material` |
+| `project_budgets.csv` | `project_id, code, budgeted_amount, approved_co_cost, current_budget, pct_complete` |
+| `budget_revisions.csv` | `revision_id, project_id, code, revised_amount, date, reason` |
+| `schedule_milestones.csv` | `milestone_id, project_id, milestone, baseline_date, forecast_date, actual_date, critical_path, weather_exposed, weather_delay_days, other_delay_days, delay_reason, planned_pct_complete` |
+| `allowances.csv` | `allowance_id, project_id, code, description, allowance_amount, selected_amount, selection_due, selection_date` |
+| `change_orders.csv` | `co_id, project_id, code, cost_amount, amount, submitted_date, approved_date, time_extension_days, reason, allowance_id` |
+| `commitments.csv` | `commitment_id, project_id, sub_id, sub_name, trade, contract_amount, commitment_type, scope_lines, co_amount, signed_date, retention_pct, invoiced_to_date, retention_held, retention_released, paid_to_date` |
+| `commitment_lines.csv` | `commitment_id, project_id, code, sub_id, sub_name, line_amount, co_amount, invoiced_to_date` |
+| `cost_transactions.csv` | `transaction_id, project_id, code, date, amount, vendor, type` |
+| `subcontractors.csv` | `sub_id, name, trade, insurance_expiry, license_expiry, active_projects` |
+
+`project_id` and `code` are the join keys tying every table back to
+`projects.csv` and `cost_codes.csv`; every date column parses with
+`pandas.to_datetime`, so any common date format works. The validation
+that backs this table lives in `detection.REQUIRED_COLUMNS` and
+`detection.load_data_from_files`, exercised by
+[`tests/test_detection.py`](tests/test_detection.py)'s upload tests.
 
 ## How the detection works
 

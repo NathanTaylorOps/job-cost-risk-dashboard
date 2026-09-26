@@ -6,6 +6,7 @@ server answers before the script has run, so a NameError in the app ships
 green. These tests run the real app file top to bottom against a stub and
 assert on what it rendered.
 """
+import io
 import os
 import re
 import runpy
@@ -346,3 +347,77 @@ def test_a_viewer_moving_a_slider_does_not_touch_the_module_defaults(data):
     assert session.dollar_floor == 25_000 and session.pct_bands["MEDIUM"] == (0.50, 0.60)
     assert det.DEFAULT_THRESHOLDS.as_dict() == before
     assert det.DOLLAR_FLOOR == 5_000 and det.PCT_BANDS["MEDIUM"] == (0.20, 0.35)
+
+
+# ---------------------------------------------------------------------------
+# Bring-your-own-data upload widget
+# ---------------------------------------------------------------------------
+UPLOAD_LABEL = "Upload your own ledger (11 CSVs)"
+
+
+class _FakeUpload(io.BytesIO):
+    """Stands in for Streamlit's UploadedFile: file-like, plus the .name
+    the app keys files by."""
+    def __init__(self, name, content: bytes):
+        super().__init__(content)
+        self.name = name
+
+
+def _demo_upload_files(drop=(), rewrite=None):
+    """Every bundled CSV's bytes, as a visitor's own upload of the demo
+    dataset would arrive -- optionally missing a file (drop) or with one
+    replaced (rewrite: {filename: bytes})."""
+    import detection as det
+    det.ensure_data(det.DATA_DIR)
+    rewrite = rewrite or {}
+    out = []
+    for name in det.CSV_FILES:
+        if name in drop:
+            continue
+        if name in rewrite:
+            out.append(_FakeUpload(name, rewrite[name]))
+            continue
+        with open(os.path.join(det.DATA_DIR, name), "rb") as fh:
+            out.append(_FakeUpload(name, fh.read()))
+    return out
+
+
+def test_uploading_a_valid_ledger_replaces_the_demo_dataset(data):
+    """A visitor's own (here: the demo files fed back in as their own
+    upload) ledger runs through the same pipeline and the page says so,
+    instead of silently continuing to show Ridgeline Custom Homes."""
+    log = run_app(0, {UPLOAD_LABEL: _demo_upload_files()})
+    kinds = [k for _, k, _ in log]
+    assert "error" not in kinds
+    assert any("Showing your data" in p[0] for ctx, k, p in log if k == "success")
+    assert streamlit_stub.LAST_RUN_GLOBALS["custom_data"] is not None
+
+
+def test_an_invalid_upload_falls_back_to_the_demo_dataset_with_a_clear_message(data):
+    """A schema mismatch is a message on the page, never a stack trace,
+    and the dashboard keeps working on the demo data rather than dying."""
+    files = _demo_upload_files(drop=("subcontractors.csv",))
+    log = run_app(0, {UPLOAD_LABEL: files})
+    kinds = [k for _, k, _ in log]
+    assert "stop" not in kinds
+    error_texts = [p[0] for ctx, k, p in log if k == "error"]
+    assert any("subcontractors.csv" in t for t in error_texts)
+    # The page still finishes rendering, on the demo dataset.
+    assert kinds.count("tabs") == 1
+    assert streamlit_stub.LAST_RUN_GLOBALS["custom_data"] is None
+    assert len(streamlit_stub.LAST_RUN_GLOBALS["data"]["projects"]) == 5
+
+
+def test_a_missing_column_in_an_uploaded_file_is_named_not_a_traceback(data):
+    import pandas as pd
+
+    import detection as det
+    det.ensure_data(det.DATA_DIR)
+    projects = pd.read_csv(os.path.join(det.DATA_DIR, "projects.csv"))
+    bad_bytes = projects.drop(columns=["contract_value"]).to_csv(index=False).encode()
+    files = _demo_upload_files(rewrite={"projects.csv": bad_bytes})
+    log = run_app(0, {UPLOAD_LABEL: files})
+    error_texts = [p[0] for ctx, k, p in log if k == "error"]
+    assert any("projects.csv" in t and "contract_value" in t for t in error_texts)
+    assert streamlit_stub.LAST_RUN_GLOBALS["custom_data"] is None
+
