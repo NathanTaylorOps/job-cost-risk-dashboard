@@ -231,6 +231,13 @@ st.markdown(
     border-radius: var(--rg-radius-sm) !important; border: 1.5px solid var(--rg-border) !important;
   }
   [data-testid="stAlert"] { border-radius: var(--rg-radius-md) !important; }
+  [data-testid="stCaptionContainer"] p { color: var(--rg-ink-2) !important; }
+  /* Streamlit's own file-uploader helper text ("200MB per file..."). The
+     class below is a hash Streamlit's styling library generates for this
+     exact version -- if a future Streamlit upgrade changes it, the
+     accessibility CI check (scripts/accessibility_check.py) will catch the
+     regression again rather than missing it silently. */
+  .st-emotion-cache-z65uni { color: var(--rg-ink-2) !important; }
 
   /* Phone and small-tablet widths. Streamlit already stacks st.columns and
      collapses the sidebar into a drawer below its own breakpoint; what is

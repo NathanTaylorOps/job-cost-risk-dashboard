@@ -27,6 +27,9 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements-dev.txt
 
+      - name: Install Playwright's Chromium
+        run: playwright install --with-deps chromium
+
       - name: Lint
         run: ruff check src app tests
 
@@ -65,3 +68,6 @@ jobs:
           curl -sSf http://localhost:8501/_stcore/health > /dev/null || {
             echo "streamlit did not start"; exit 1; }
           kill $APP_PID
+
+      - name: Accessibility check (axe-core, serious/critical only)
+        run: python scripts/accessibility_check.py

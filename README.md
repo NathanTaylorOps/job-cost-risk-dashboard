@@ -313,10 +313,10 @@ snapshot can be moved on without touching a single figure.
 
 ## Testing
 
-[`tests/test_detection.py`](tests/test_detection.py) is 106 tests in two
-halves, [`tests/test_app.py`](tests/test_app.py) adds 25 that run the
+[`tests/test_detection.py`](tests/test_detection.py) is 113 tests in two
+halves, [`tests/test_app.py`](tests/test_app.py) adds 30 that run the
 dashboard itself, and [`tests/test_charts.py`](tests/test_charts.py) adds
-31 that parse the charts it draws -- 162 in total.
+36 that parse the charts it draws -- 179 in total.
 
 The first half of the detection suite asserts that every planted problem
 is caught at the severity it was planted at and that the explanation says

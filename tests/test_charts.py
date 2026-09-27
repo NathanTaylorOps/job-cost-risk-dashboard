@@ -39,6 +39,26 @@ def test_every_chart_is_well_formed_xml(data, index):
 
 
 @pytest.mark.parametrize("index", range(5))
+def test_every_chart_declares_an_accessible_name(data, index):
+    """A sighted user gets the severity ladder from color, shape and a label
+    beside it (see charts.py's module docstring); a screen reader gets
+    nothing from an <svg> unless it declares role="img" and an accessible
+    name. _open() sets both plus a real <title> element -- this checks that
+    every chart actually drawn on the page still carries them, so a future
+    edit that touches _open() or bypasses it cannot drop this silently."""
+    found = svgs_on_page(index)
+    assert found, f"project index {index} drew no charts at all"
+    for svg in found:
+        root = ET.fromstring(svg)
+        assert root.get("role") == "img", f'chart missing role="img":\n{svg[:200]}'
+        aria_label = root.get("aria-label")
+        assert aria_label, f"chart missing aria-label:\n{svg[:200]}"
+        title_el = root.find(f"{SVG_NS}title")
+        assert title_el is not None, f"chart missing a <title> element:\n{svg[:200]}"
+        assert title_el.text == aria_label, "the <title> should say the same thing as aria-label, for hover and screen readers alike"
+
+
+@pytest.mark.parametrize("index", range(5))
 def test_nothing_is_drawn_outside_the_viewbox(data, index):
     for svg in svgs_on_page(index):
         root = ET.fromstring(svg)
