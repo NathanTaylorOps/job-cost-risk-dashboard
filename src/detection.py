@@ -21,6 +21,7 @@ glance is not useful to someone triaging five live jobs on a Monday.
 
 import copy
 import json
+import math
 import os
 import subprocess
 import sys
@@ -277,6 +278,8 @@ def _parse_bands(key, value):
         bad = [k for k, v in value.items() if isinstance(v, bool) or not isinstance(v, (int, float))]
         if bad:
             raise ValueError(f"{key}: value(s) {bad} must be numbers")
+        if any(not math.isfinite(v) or v < 0 for v in value.values()):
+            raise ValueError(f"{key}: values must be finite and nonnegative")
         return {k: float(v) for k, v in value.items()}
     if not all(isinstance(v, (list, tuple)) for v in value.values()):
         bad = [k for k, v in value.items() if not isinstance(v, (list, tuple))]
@@ -287,6 +290,8 @@ def _parse_bands(key, value):
             raise ValueError(f"{key}.{level}: expected [low, high], got {pair!r}")
         lo = float(pair[0])
         hi = float("inf") if pair[1] in (None, "inf") else float(pair[1])
+        if not math.isfinite(lo) or math.isnan(hi):
+            raise ValueError(f"{key}.{level}: bounds must be finite except an open upper bound")
         if not lo < hi:
             raise ValueError(f"{key}.{level}: low ({lo}) must be below high ({hi})")
         parsed[level] = (lo, hi)
@@ -299,6 +304,8 @@ def _validate_bands(key: str, bands: dict) -> None:
     missing = [lvl for lvl in ("LOW", "MEDIUM", "HIGH") if lvl not in bands]
     if missing:
         raise ValueError(f"{key}: missing band(s) {missing}")
+    if bands["HIGH"][1] != float("inf"):
+        raise ValueError(f"{key}: HIGH must have an open upper bound")
     if bands["LOW"][1] != bands["MEDIUM"][0] or bands["MEDIUM"][1] != bands["HIGH"][0]:
         raise ValueError(
             f"{key}: bands must be contiguous, got LOW {bands['LOW']}, "
@@ -326,7 +333,7 @@ def _validated_override(key: str, current, value):
     else:
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             raise TypeError(f"{key}: expected a number, got {type(value).__name__}")
-        if value < 0:
+        if not math.isfinite(value) or value < 0:
             raise ValueError(f"{key}: must not be negative, got {value}")
     if key.endswith("_BANDS"):
         _validate_bands(key, value)
