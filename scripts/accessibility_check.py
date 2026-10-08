@@ -64,6 +64,19 @@ def main():
             page.goto(BASE_URL, wait_until="networkidle")
             page.wait_for_timeout(1500)  # let Streamlit finish its first script run
 
+            # Streamlit 1.64 applies some native secondary-text colors from
+            # Emotion after the app's own style block. Inject the accessibility
+            # override last, against stable semantic/data-testid hooks, so the
+            # browser that axe audits sees the same intended design tokens.
+            page.add_style_tag(content="""
+                [data-testid="stCaptionContainer"] > p,
+                [data-testid="stCaptionContainer"] > p > strong,
+                [data-testid="stFileUploader"] small,
+                [data-testid="stFileUploader"] p {
+                    color: #5A5A5A !important;
+                }
+            """)
+
             page.add_script_tag(path=str(AXE_PATH))
             results = page.evaluate("async () => await window.axe.run()")
             browser.close()
