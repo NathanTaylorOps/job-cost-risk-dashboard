@@ -585,6 +585,47 @@ def load_data_from_files(files: dict) -> tuple[dict | None, list]:
             if (line_projects != line_ids.map(parent_projects)).any():
                 errors.append("commitment_lines.csv: project_id differs from parent commitment.")
 
+    # Monetary amounts can legitimately be negative for credits, but they
+    # must be finite numeric values or downstream sums/forecasts are unsafe.
+    financial_columns = {
+        "project_budgets.csv": ("budgeted_amount", "approved_co_cost", "current_budget", "pct_complete"),
+        "budget_revisions.csv": ("revised_amount",),
+        "allowances.csv": ("allowance_amount", "selected_amount"),
+        "change_orders.csv": ("cost_amount", "amount"),
+        "commitments.csv": ("contract_amount", "co_amount", "invoiced_to_date",
+                            "retention_held", "retention_released", "paid_to_date"),
+        "commitment_lines.csv": ("line_amount", "co_amount", "invoiced_to_date"),
+        "cost_transactions.csv": ("amount",),
+    }
+    for filename, columns in financial_columns.items():
+        table = parsed[filename]
+        for column in columns:
+            values = pd.to_numeric(table[column], errors="coerce")
+            # An unselected allowance legitimately has no selected_amount yet.
+            invalid = ~np.isfinite(values)
+            if filename == "allowances.csv" and column == "selected_amount":
+                invalid = invalid & table[column].notna()
+            if invalid.any():
+                errors.append(f"{filename}: {column} must contain finite numeric values.")
+
+    for filename, identifier in (
+        ("cost_transactions.csv", "transaction_id"),
+        ("change_orders.csv", "co_id"),
+        ("budget_revisions.csv", "revision_id"),
+    ):
+        values = parsed[filename][identifier].astype("string").str.strip()
+        if (values.isna() | values.eq("") | values.duplicated()).any():
+            errors.append(f"{filename}: {identifier} must be populated and unique.")
+
+    for filename, column in (
+        ("project_budgets.csv", "pct_complete"),
+        ("commitments.csv", "retention_pct"),
+    ):
+        values = pd.to_numeric(parsed[filename][column], errors="coerce")
+        maximum = 100 if column == "pct_complete" else 1
+        if (values.isna() | ~np.isfinite(values) | (values < 0) | (values > maximum)).any():
+            errors.append(f"{filename}: {column} must be between 0 and {maximum}.")
+
     if errors:
         return None, errors
 

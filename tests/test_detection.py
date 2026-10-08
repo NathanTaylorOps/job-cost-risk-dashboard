@@ -1788,3 +1788,40 @@ def test_financial_forecast_keeps_suspected_duplicates_in_booked_costs(data):
     forecast = next(f for f in det.compute_cost_forecast(data) if f.project_id == "P02")
     booked = budgets.loc[budgets["project_id"] == "P02", "ledger_spend"].sum()
     assert forecast.spend_to_date == pytest.approx(booked)
+
+
+@pytest.mark.parametrize("filename,column,value", [
+    ("cost_transactions.csv", "amount", float("nan")),
+    ("commitment_lines.csv", "line_amount", float("inf")),
+    ("project_budgets.csv", "budgeted_amount", "not-a-number"),
+    ("change_orders.csv", "amount", float("-inf")),
+])
+def test_upload_rejects_invalid_financial_numbers(filename, column, value):
+    files = _demo_files()
+    try:
+        table = pd.read_csv(files[filename])
+        files[filename].close()
+        table[column] = table[column].astype(object)
+        table.loc[0, column] = value
+        files[filename] = io.StringIO(table.to_csv(index=False))
+        result, errors = det.load_data_from_files(files)
+    finally:
+        for file in files.values():
+            file.close()
+    assert result is None
+    assert any(filename in error and column in error for error in errors)
+
+
+def test_upload_rejects_duplicate_transaction_identifiers():
+    files = _demo_files()
+    try:
+        table = pd.read_csv(files["cost_transactions.csv"])
+        files["cost_transactions.csv"].close()
+        table.loc[1, "transaction_id"] = table.loc[0, "transaction_id"]
+        files["cost_transactions.csv"] = io.StringIO(table.to_csv(index=False))
+        result, errors = det.load_data_from_files(files)
+    finally:
+        for file in files.values():
+            file.close()
+    assert result is None
+    assert any("transaction_id must be populated and unique" in error for error in errors)
