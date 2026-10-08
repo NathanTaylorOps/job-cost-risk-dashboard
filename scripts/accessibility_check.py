@@ -64,43 +64,8 @@ def main():
             page.goto(BASE_URL, wait_until="networkidle")
             page.wait_for_timeout(1500)  # let Streamlit finish its first script run
 
-            # Streamlit 1.64 applies some native secondary-text colors from
-            # Emotion after the app's own style block. Inject the accessibility
-            # override last, against stable semantic/data-testid hooks, so the
-            # browser that axe audits sees the same intended design tokens.
-            # Apply the intended accessible secondary text directly to
-            # rendered nodes. Streamlit/Emotion can replace style tags during
-            # rerenders, while inline important declarations remain attached
-            # to the actual elements axe is about to inspect.
-            patched = page.evaluate("""() => {
-                const nodes = document.querySelectorAll(
-                    '[data-testid="stCaptionContainer"] p, ' +
-                    '[data-testid="stFileUploader"] small, ' +
-                    '[data-testid="stFileUploader"] p'
-                );
-                nodes.forEach((el) => el.style.setProperty(
-                    'color', '#5A5A5A', 'important'
-                ));
-                return Array.from(nodes).map((el) => ({
-                    tag: el.tagName,
-                    color: getComputedStyle(el).color,
-                    text: (el.textContent || '').slice(0, 80),
-                }));
-            }""")
-            print(f"Patched secondary text nodes: {patched}")
-            print("Caption count:", page.locator('[data-testid="stCaptionContainer"] p').count())
-
             page.add_script_tag(path=str(AXE_PATH))
-            results = page.evaluate("""async () => {
-                const targets = Array.from(document.querySelectorAll('[data-testid="stCaptionContainer"] p'));
-                const before = targets.slice(0, 5).map(e => ({text:e.textContent.slice(0,50), color:getComputedStyle(e).color, inline:e.getAttribute('style')}));
-                const result = await window.axe.run();
-                const after = targets.slice(0, 5).map(e => ({text:e.textContent.slice(0,50), color:getComputedStyle(e).color, inline:e.getAttribute('style'), connected:e.isConnected}));
-                return {result, before, after};
-            }""")
-            print("Before axe:", results["before"])
-            print("After axe:", results["after"])
-            results = results["result"]
+            results = page.evaluate("async () => await window.axe.run()")
             browser.close()
 
         violations = results["violations"]
