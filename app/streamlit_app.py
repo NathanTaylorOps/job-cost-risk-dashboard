@@ -231,7 +231,14 @@ st.markdown(
     border-radius: var(--rg-radius-sm) !important; border: 1.5px solid var(--rg-border) !important;
   }
   [data-testid="stAlert"] { border-radius: var(--rg-radius-md) !important; }
-  [data-testid="stCaptionContainer"] { color: var(--rg-ink-2) !important; }\n  [data-testid="stCaptionContainer"] * { color: inherit !important; }
+  /* Streamlit 1.64 injects caption styles after this stylesheet, so the
+     generated rule can win even against a normal !important selector.
+     Specificity here stays on stable data-testid attributes rather than
+     version-specific emotion class names. */
+  .stApp [data-testid="stMarkdown"] [data-testid="stCaptionContainer"] > p,
+  .stApp [data-testid="stMarkdown"] [data-testid="stCaptionContainer"] > p > strong {
+    color: var(--rg-ink-2) !important;
+  }
   /* Streamlit's own file-uploader helper text ("200MB per file..."). The
      class below is a hash Streamlit's styling library generates for this
      exact version -- if a future Streamlit upgrade changes it, the
