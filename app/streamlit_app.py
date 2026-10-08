@@ -234,6 +234,11 @@ st.markdown(
   /* Native secondary text. Streamlit's Emotion rules can use !important,
      so keep these selectors on stable attributes/classes but give them
      enough specificity to win without depending on generated hashes. */
+  /* Streamlit applies muted captions using ancestor opacity; overriding the
+     text colour alone leaves the visually blended contrast unchanged. */
+  html body .stApp [data-testid="stCaptionContainer"] {
+    opacity: 1 !important;
+  }
   html body .stApp [data-testid="stCaptionContainer"] > p,
   html body .stApp [data-testid="stCaptionContainer"] > p > strong {
     color: var(--rg-ink-2) !important;
