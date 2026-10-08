@@ -88,9 +88,19 @@ def main():
                 }));
             }""")
             print(f"Patched secondary text nodes: {patched}")
+            print("Caption count:", page.locator('[data-testid="stCaptionContainer"] p').count())
 
             page.add_script_tag(path=str(AXE_PATH))
-            results = page.evaluate("async () => await window.axe.run()")
+            results = page.evaluate("""async () => {
+                const targets = Array.from(document.querySelectorAll('[data-testid="stCaptionContainer"] p'));
+                const before = targets.slice(0, 5).map(e => ({text:e.textContent.slice(0,50), color:getComputedStyle(e).color, inline:e.getAttribute('style')}));
+                const result = await window.axe.run();
+                const after = targets.slice(0, 5).map(e => ({text:e.textContent.slice(0,50), color:getComputedStyle(e).color, inline:e.getAttribute('style'), connected:e.isConnected}));
+                return {result, before, after};
+            }""")
+            print("Before axe:", results["before"])
+            print("After axe:", results["after"])
+            results = results["result"]
             browser.close()
 
         violations = results["violations"]
