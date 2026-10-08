@@ -1731,3 +1731,48 @@ def test_threshold_overrides_reject_nonfinite_values():
         t.with_overrides({"PCT_BANDS": {"LOW": [float("nan"), 0.2]}})
     with pytest.raises(ValueError):
         t.with_overrides({"PCT_BANDS": {"HIGH": [0.35, 0.5]}})
+
+
+def test_upload_rejects_unknown_cost_code():
+    files = _demo_files()
+    try:
+        table = pd.read_csv(files["cost_transactions.csv"])
+        files["cost_transactions.csv"].close()
+        table.loc[0, "code"] = "UNKNOWN-CODE"
+        files["cost_transactions.csv"] = io.StringIO(table.to_csv(index=False))
+        result, errors = det.load_data_from_files(files)
+    finally:
+        for file in files.values():
+            file.close()
+    assert result is None
+    assert any("cost_transactions.csv" in e and "cost code" in e for e in errors)
+
+
+def test_upload_rejects_orphaned_commitment_line():
+    files = _demo_files()
+    try:
+        table = pd.read_csv(files["commitment_lines.csv"])
+        files["commitment_lines.csv"].close()
+        table.loc[0, "commitment_id"] = "UNKNOWN-COMMITMENT"
+        files["commitment_lines.csv"] = io.StringIO(table.to_csv(index=False))
+        result, errors = det.load_data_from_files(files)
+    finally:
+        for file in files.values():
+            file.close()
+    assert result is None
+    assert any("commitment_lines.csv" in e and "commitment_id" in e for e in errors)
+
+
+def test_upload_rejects_duplicate_budget_key():
+    files = _demo_files()
+    try:
+        table = pd.read_csv(files["project_budgets.csv"])
+        files["project_budgets.csv"].close()
+        table = pd.concat([table, table.iloc[[0]]], ignore_index=True)
+        files["project_budgets.csv"] = io.StringIO(table.to_csv(index=False))
+        result, errors = det.load_data_from_files(files)
+    finally:
+        for file in files.values():
+            file.close()
+    assert result is None
+    assert any("duplicate project/code pair" in e for e in errors)
