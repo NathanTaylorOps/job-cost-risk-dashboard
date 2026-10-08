@@ -1167,24 +1167,26 @@ def detect_commitment_issues(data: dict, thresholds: Thresholds | None = None) -
                         f"for this scope and it is already committed."
                     ),
                 ))
-            continue
-        buyout_pct = buyout_var / row["original_budget"]
-        if buyout_var > 0:
-            sev = combined_severity(pct_severity(buyout_pct, t), buyout_var, floor=row["dollar_floor"],
-                                    thresholds=t)
-            if sev != "NONE":
-                explanation = (
-                    f"Cost code {code} ({desc}) on {pid}: sub contract ${row['committed_amount']:,.0f} "
-                    f"against a ${row['original_budget']:,.0f} budget line, {buyout_pct:+.0%} "
-                    f"(${buyout_var:,.0f}) over at buyout."
-                )
-                rev = revs[(revs["project_id"] == pid) & (revs["code"] == code)]
-                if not rev.empty and abs(rev.iloc[-1]["revised_amount"] - row["committed_amount"]) < 0.01 * row["committed_amount"]:
-                    explanation += (
-                        f" The budget line was edited to match this contract on "
-                        f"{rev.iloc[-1]['date'].date()} ({rev.iloc[-1]['revision_id']})."
+            # An unbudgeted commitment can also be over-invoiced; do not
+            # skip the independent invoice-versus-contract check below.
+        else:
+            buyout_pct = buyout_var / row["original_budget"]
+            if buyout_var > 0:
+                sev = combined_severity(pct_severity(buyout_pct, t), buyout_var, floor=row["dollar_floor"],
+                                        thresholds=t)
+                if sev != "NONE":
+                    explanation = (
+                        f"Cost code {code} ({desc}) on {pid}: sub contract ${row['committed_amount']:,.0f} "
+                        f"against a ${row['original_budget']:,.0f} budget line, {buyout_pct:+.0%} "
+                        f"(${buyout_var:,.0f}) over at buyout."
                     )
-                flags.append(AnomalyFlag(pid, code, sev, buyout_var, buyout_pct, explanation, "buyout"))
+                    rev = revs[(revs["project_id"] == pid) & (revs["code"] == code)]
+                    if not rev.empty and abs(rev.iloc[-1]["revised_amount"] - row["committed_amount"]) < 0.01 * row["committed_amount"]:
+                        explanation += (
+                            f" The budget line was edited to match this contract on "
+                            f"{rev.iloc[-1]['date'].date()} ({rev.iloc[-1]['revision_id']})."
+                        )
+                    flags.append(AnomalyFlag(pid, code, sev, buyout_var, buyout_pct, explanation, "buyout"))
 
         over = row["invoiced_by_sub"] - row["commitment_total"]
         if over >= t.budget_drift_dollar_floor:

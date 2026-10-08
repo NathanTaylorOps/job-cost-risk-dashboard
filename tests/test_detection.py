@@ -1825,3 +1825,20 @@ def test_upload_rejects_duplicate_transaction_identifiers():
             file.close()
     assert result is None
     assert any("transaction_id must be populated and unique" in error for error in errors)
+
+
+def test_unbudgeted_commitment_still_checks_over_invoicing(data):
+    data = {name: frame.copy() for name, frame in data.items()}
+    line = data["commitment_lines"].iloc[0]
+    pid, code = line["project_id"], line["code"]
+    data["project_budgets"] = data["project_budgets"][
+        ~((data["project_budgets"]["project_id"] == pid) &
+          (data["project_budgets"]["code"] == code))
+    ].copy()
+    data["commitment_lines"].loc[
+        (data["commitment_lines"]["project_id"] == pid) &
+        (data["commitment_lines"]["code"] == code), "invoiced_to_date"
+    ] = 1_000_000
+    flags = det.detect_commitment_issues(data)
+    assert any(f.project_id == pid and f.code == code and f.kind == "buyout" for f in flags)
+    assert any(f.project_id == pid and f.code == code and f.kind == "over-invoiced" for f in flags)
