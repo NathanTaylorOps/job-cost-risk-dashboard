@@ -10,6 +10,10 @@ A construction manager responsible for several simultaneous projects needs more 
 
 This application consolidates those signals into a **worst-first portfolio view**, supported by project drill-downs and a practical follow-up list. It is designed around a recurring operational decision: **which job needs a call this morning?**
 
+![Portfolio risk overview showing five projects, severity signals and management priorities](docs/portfolio-overview.png)
+
+*Portfolio overview — fictional demonstration data, with higher-priority projects shown first.*
+
 ## What the dashboard provides
 
 | Management question | Dashboard capability |
@@ -31,6 +35,10 @@ The supplied Ridgeline Custom Homes portfolio is **fully synthetic and deliberat
 - **Cascade Ridge:** weather and changed conditions affect forecast completion; a potential duplicate framing draw deserves investigation before the next payment.
 - **Fairhaven:** a deliberately clean project tests whether the dashboard can distinguish normal operations from exceptions.
 - **Portfolio-wide:** recurring earthwork overruns illustrate exposure that can be more consequential across several jobs than on any one project.
+
+![Harborview project intervention call list showing subcontractor, budget and unsigned variation risks](docs/project-detail.png)
+
+*Project detail — related cost, contractual and compliance warnings grouped into actionable conversations.*
 
 Flags can share a root cause; **flag amounts must not be added together as a financial-loss estimate.** The output supports investigation and prioritisation, not automatic conclusions about fault or payment legitimacy.
 
