@@ -158,6 +158,16 @@ def test_the_page_is_built_from_bordered_cards(data):
                   for t in markdown_payloads), f"no chart card rendered on project index {index}"
 
 
+def test_portfolio_matrix_uses_full_width_card(data):
+    """Five-project matrix must not inherit the narrow reading-column cap."""
+    for index in range(5):
+        rendered = [payload[0] for _, kind, payload in run_app(index) if kind == "markdown"]
+        wide = [html for html in rendered
+                if 'class="rg-card rg-chart-card rg-chart-card-wide"' in html]
+        assert len(wide) == 1, "portfolio matrix should have one full-width card"
+        assert "Portfolio signals" in wide[0]
+
+
 def test_the_headline_numbers_sit_in_their_own_kpi_cards(data):
     """The five headline numbers are hand-built HTML cards (rg-kpi-card),
     not st.metric, so they carry the same border/radius/shadow system as
