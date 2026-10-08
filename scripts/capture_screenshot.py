@@ -21,6 +21,8 @@ def main() -> None:
     parser.add_argument("--output", default="docs/portfolio-overview.png")
     parser.add_argument("--width", type=int, default=1440)
     parser.add_argument("--height", type=int, default=960)
+    parser.add_argument("--main-only", action="store_true",
+                        help="Capture only the main dashboard, without the sidebar.")
     args = parser.parse_args()
 
     if args.width < 640 or args.height < 480:
@@ -41,7 +43,23 @@ def main() -> None:
             page.locator('[data-testid="stApp"]').wait_for(timeout=60000)
             page.get_by_text("Ridgeline Custom Homes").first.wait_for(timeout=60000)
             page.wait_for_load_state("networkidle", timeout=60000)
-            page.screenshot(path=str(target), full_page=True, animations="disabled")
+            # Streamlit may show its own onboarding recommendation on the
+            # first launch. Dismiss it through the visible UI before capture.
+            dismiss = page.get_by_text("Don't show again", exact=True)
+            if dismiss.count() and dismiss.first.is_visible():
+                dismiss.first.click()
+                page.wait_for_timeout(300)
+
+            if args.main_only:
+                # Keeps the risk grid legible in the README without modifying
+                # any application values, classes, or visual content.
+                page.locator('[data-testid="stMain"]').screenshot(
+                    path=str(target), animations="disabled"
+                )
+            else:
+                page.screenshot(
+                    path=str(target), full_page=True, animations="disabled"
+                )
         finally:
             browser.close()
 
