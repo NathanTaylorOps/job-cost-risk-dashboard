@@ -1684,3 +1684,37 @@ def test_two_threshold_sets_do_not_interfere(data):
     assert all(r == results[1] for r in results[1::2])
     assert results[0] != results[1]
     assert det.DEFAULT_THRESHOLDS == det.Thresholds() and det.DOLLAR_FLOOR == 5_000
+
+
+def test_upload_rejects_duplicate_project_ids_and_invalid_financial_values():
+    files = _demo_files()
+    try:
+        df = pd.read_csv(files["projects.csv"])
+        files["projects.csv"].close()
+        df.loc[1, "project_id"] = df.loc[0, "project_id"]
+        df.loc[0, "contract_value"] = -100
+        df.loc[0, "pct_complete"] = 150
+        files["projects.csv"] = io.StringIO(df.to_csv(index=False))
+        result, errors = det.load_data_from_files(files)
+    finally:
+        for file in files.values():
+            file.close()
+    assert result is None
+    assert any("project_id values must be unique" in e for e in errors)
+    assert any("contract_value" in e for e in errors)
+    assert any("pct_complete" in e for e in errors)
+
+
+def test_upload_rejects_unknown_project_references():
+    files = _demo_files()
+    try:
+        df = pd.read_csv(files["cost_transactions.csv"])
+        files["cost_transactions.csv"].close()
+        df.loc[0, "project_id"] = "UNKNOWN-PROJECT"
+        files["cost_transactions.csv"] = io.StringIO(df.to_csv(index=False))
+        result, errors = det.load_data_from_files(files)
+    finally:
+        for file in files.values():
+            file.close()
+    assert result is None
+    assert any("cost_transactions.csv" in e and "unknown project" in e for e in errors)
