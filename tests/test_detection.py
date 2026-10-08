@@ -1776,3 +1776,15 @@ def test_upload_rejects_duplicate_budget_key():
             file.close()
     assert result is None
     assert any("duplicate project/code pair" in e for e in errors)
+
+
+def test_financial_forecast_keeps_suspected_duplicates_in_booked_costs(data):
+    budgets = det.effective_budgets(data)
+    row = budgets[(budgets["project_id"] == "P02") & (budgets["code"] == "06-01")].iloc[0]
+    assert row["suspected_duplicates"] > 0
+    assert row["ledger_spend"] > row["actual_spend"]
+    # The forecast must not treat an unconfirmed duplicate as a refund.
+    assert row["forecast_at_completion"] >= row["ledger_spend"]
+    forecast = next(f for f in det.compute_cost_forecast(data) if f.project_id == "P02")
+    booked = budgets.loc[budgets["project_id"] == "P02", "ledger_spend"].sum()
+    assert forecast.spend_to_date == pytest.approx(booked)

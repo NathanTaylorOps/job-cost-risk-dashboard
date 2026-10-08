@@ -848,7 +848,8 @@ def effective_budgets(data: dict, thresholds: Thresholds | None = None) -> pd.Da
     # spend plus whatever the sub has not yet invoiced against its
     # contract, so a line that came in under budget shows the saving.
     progress = m["progress"].to_numpy(dtype=float)
-    spend = m["actual_spend"].to_numpy(dtype=float)
+    # Financial forecasts retain booked ledger costs until a verified reversal.
+    spend = m["ledger_spend"].to_numpy(dtype=float)
     budget = m["current_budget"].to_numpy(dtype=float)
     committed = m["commitment_total"].to_numpy(dtype=float)
     unpaid_commitment = np.maximum(committed - m["invoiced_by_sub"].to_numpy(dtype=float), 0.0)
@@ -1287,7 +1288,7 @@ def compute_schedule_risk(data: dict, as_of: date | None = None,
         spi = earned_pct / planned_pct if planned_pct > 0 else 1.0
 
         pb = budgets[budgets["project_id"] == pid]
-        earned_value, actual = pb["expected_spend_to_date"].sum(), pb["actual_spend"].sum()
+        earned_value, actual = pb["expected_spend_to_date"].sum(), pb["ledger_spend"].sum()
         cpi = earned_value / actual if actual > 0 else 1.0
 
         cp = pm[pm["critical_path"] == True]  # noqa: E712
@@ -1606,7 +1607,7 @@ def compute_cost_forecast(data: dict, thresholds: Thresholds | None = None) -> l
         revised = p["contract_value"] + float(approved.get(pid, 0.0))
         bac = float(pb["current_budget"].sum())
         eac = float(pb["forecast_at_completion"].sum())
-        spend = float(pb["actual_spend"].sum())
+        spend = float(pb["ledger_spend"].sum())
         target = float(p["margin_pct"])
         projected = (revised - eac) / revised if revised > 0 else 0.0
         reported = p["pct_complete"] / 100.0
