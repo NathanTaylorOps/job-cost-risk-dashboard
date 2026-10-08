@@ -510,6 +510,42 @@ def load_data_from_files(files: dict) -> tuple[dict | None, list]:
     if errors:
         return None, errors
 
+    # Reject broken project identity and financial inputs before downstream detectors
+    # can silently aggregate invalid rows or present misleading risk scores.
+    projects = parsed["projects.csv"]
+    ids = projects["project_id"].astype("string").str.strip()
+    if ids.isna().any() or ids.eq("").any():
+        errors.append("projects.csv: project_id must be populated on every row.")
+    if ids.duplicated().any():
+        errors.append("projects.csv: project_id values must be unique.")
+
+    for column, minimum, maximum in (
+        ("contract_value", 0, None),
+        ("margin_pct", 0, 1),
+        ("pct_complete", 0, 100),
+        ("billed_to_date", 0, None),
+        ("retainage_held", 0, None),
+    ):
+        values = pd.to_numeric(projects[column], errors="coerce")
+        invalid = values.isna() | ~np.isfinite(values) | (values < minimum)
+        if maximum is not None:
+            invalid = invalid | (values > maximum)
+        if invalid.any():
+            bounds = f"between {minimum} and {maximum}" if maximum is not None else f"at least {minimum}"
+            errors.append(f"projects.csv: {column} must be a finite number {bounds}.")
+
+    known_ids = set(ids.dropna())
+    for name, df in parsed.items():
+        if name == "projects.csv" or "project_id" not in df.columns:
+            continue
+        references = df["project_id"].astype("string").str.strip()
+        invalid = references.isna() | references.eq("") | ~references.isin(known_ids)
+        if invalid.any():
+            errors.append(f"{name}: project_id contains missing or unknown project references.")
+
+    if errors:
+        return None, errors
+
     return {name[:-4]: df for name, df in parsed.items()}, []
 
 
