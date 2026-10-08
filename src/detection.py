@@ -573,7 +573,7 @@ def load_data_from_files(files: dict) -> tuple[dict | None, list]:
     commitment_ids = commitments["commitment_id"].astype("string").str.strip()
     if commitment_ids.isna().any() or commitment_ids.eq("").any() or commitment_ids.duplicated().any():
         errors.append("commitments.csv: commitment_id must be populated and unique.")
-    parent_projects = dict(zip(commitment_ids, commitments["project_id"].astype("string").str.strip()))
+    parent_projects = dict(zip(commitment_ids, commitments["project_id"].astype("string").str.strip(), strict=True))
     lines = parsed["commitment_lines.csv"]
     if not lines.empty:
         line_ids = lines["commitment_id"].astype("string").str.strip()
