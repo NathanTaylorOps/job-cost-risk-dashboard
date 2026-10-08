@@ -1187,7 +1187,7 @@ def detect_commitment_issues(data: dict, thresholds: Thresholds | None = None) -
                             f"{rev.iloc[-1]['date'].date()} ({rev.iloc[-1]['revision_id']})."
                         )
                     flags.append(AnomalyFlag(pid, code, sev, buyout_var, buyout_pct, explanation, "buyout"))
-    
+
         over = row["invoiced_by_sub"] - row["commitment_total"]
         if over >= t.budget_drift_dollar_floor:
             explanation = (
