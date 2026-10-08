@@ -243,6 +243,12 @@ st.markdown(
   html body .stApp [data-testid="stCaptionContainer"] > p > strong {
     color: var(--rg-ink-2) !important;
   }
+  /* Streamlit's file-size/type hint is a span, not a p/small. Its
+     inherited muted styling narrowly misses AA contrast on our page. */
+  html body .stApp [data-testid="stFileUploader"] span {
+    color: var(--rg-ink-2) !important;
+    opacity: 1 !important;
+  }
   html body .stApp [data-testid="stFileUploader"] small,
   html body .stApp [data-testid="stFileUploader"] p {
     color: var(--rg-ink-2) !important;
