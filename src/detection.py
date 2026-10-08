@@ -822,7 +822,8 @@ def effective_budgets(data: dict, thresholds: Thresholds | None = None) -> pd.Da
     # see the money. Left out, a miscoded invoice or a scope nobody
     # priced is invisible to every number an owner actually reads.
     seen = pd.concat([tx[["project_id", "code"]],
-                      data["commitment_lines"][["project_id", "code"]]]).drop_duplicates()
+                      data["commitment_lines"][["project_id", "code"]],
+                      cos.loc[cos["approved_date"].notna(), ["project_id", "code"]]]).drop_duplicates()
     known = set(zip(budgets["project_id"], budgets["code"], strict=True))
     extra_keys = [(p_, c_) for p_, c_ in zip(seen["project_id"], seen["code"], strict=True) if (p_, c_) not in known]
     if extra_keys:
