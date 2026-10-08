@@ -1718,3 +1718,16 @@ def test_upload_rejects_unknown_project_references():
             file.close()
     assert result is None
     assert any("cost_transactions.csv" in e and "unknown project" in e for e in errors)
+
+
+def test_threshold_overrides_reject_nonfinite_values():
+    t = det.Thresholds()
+    for bad in (float("nan"), float("inf"), float("-inf")):
+        with pytest.raises(ValueError):
+            t.with_overrides({"DOLLAR_FLOOR": bad})
+        with pytest.raises(ValueError):
+            t.with_overrides({"DOLLAR_PROMOTION_TIERS": {"LOW": bad}})
+    with pytest.raises(ValueError):
+        t.with_overrides({"PCT_BANDS": {"LOW": [float("nan"), 0.2]}})
+    with pytest.raises(ValueError):
+        t.with_overrides({"PCT_BANDS": {"HIGH": [0.35, 0.5]}})
