@@ -32,3 +32,15 @@ python scripts/capture_screenshot.py --url http://localhost:8501 --output docs/p
 ```
 
 After the screenshots are inspected and committed, add one overview image near the top of the README and an optional project-detail image next to the demonstration cases. Do not add image references before the files exist.
+
+## Clean README overview capture
+
+Streamlit may display a one-time suggestion about installing development skills. The capture utility now dismisses that suggestion through the visible UI before taking a screenshot.
+
+For a focused image showing the main portfolio screen rather than the entire sidebar, run:
+
+```bash
+python scripts/capture_screenshot.py --main-only --output docs/portfolio-overview.png --width 1440 --height 960
+```
+
+Open the output at full resolution and check that the portfolio grid is readable and that no popup obscures information. Do not publish screenshots containing a local help popup. The original full-page mode remains available without `--main-only`.
