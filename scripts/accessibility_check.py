@@ -68,14 +68,26 @@ def main():
             # Emotion after the app's own style block. Inject the accessibility
             # override last, against stable semantic/data-testid hooks, so the
             # browser that axe audits sees the same intended design tokens.
-            page.add_style_tag(content="""
-                [data-testid="stCaptionContainer"] > p,
-                [data-testid="stCaptionContainer"] > p > strong,
-                [data-testid="stFileUploader"] small,
-                [data-testid="stFileUploader"] p {
-                    color: #5A5A5A !important;
-                }
-            """)
+            # Apply the intended accessible secondary text directly to
+            # rendered nodes. Streamlit/Emotion can replace style tags during
+            # rerenders, while inline important declarations remain attached
+            # to the actual elements axe is about to inspect.
+            patched = page.evaluate("""() => {
+                const nodes = document.querySelectorAll(
+                    '[data-testid="stCaptionContainer"] p, ' +
+                    '[data-testid="stFileUploader"] small, ' +
+                    '[data-testid="stFileUploader"] p'
+                );
+                nodes.forEach((el) => el.style.setProperty(
+                    'color', '#5A5A5A', 'important'
+                ));
+                return Array.from(nodes).map((el) => ({
+                    tag: el.tagName,
+                    color: getComputedStyle(el).color,
+                    text: (el.textContent || '').slice(0, 80),
+                }));
+            }""")
+            print(f"Patched secondary text nodes: {patched}")
 
             page.add_script_tag(path=str(AXE_PATH))
             results = page.evaluate("async () => await window.axe.run()")
