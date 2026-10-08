@@ -13,6 +13,7 @@ primaryColor = "#1F5FA8"
 backgroundColor = "#F5F5F7"
 secondaryBackgroundColor = "#FFFFFF"
 textColor = "#1A1A1A"
+secondaryTextColor = "#5A5A5A"
 # The system font stack, not Streamlit's web-default sans -- the same
 # choice streamlit_app.py's own --rg-font makes for the hand-built cards,
 # so native widgets (buttons, inputs, the sidebar) read as the same

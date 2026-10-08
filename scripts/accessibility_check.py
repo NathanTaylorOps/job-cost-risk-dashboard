@@ -88,6 +88,7 @@ def main():
                 print(f"[{v['impact']}] {v['id']}: {v['help']} ({len(v['nodes'])} node(s))")
                 for n in v["nodes"]:
                     print(f"    target: {n['target']}")
+                    print("    html:", n.get("html", ""))
                     print(f"    {(n.get('failureSummary') or '').replace(chr(10), ' | ')}")
             print(f"\n{len(serious)} serious/critical accessibility violation type(s) found.")
             sys.exit(1)
