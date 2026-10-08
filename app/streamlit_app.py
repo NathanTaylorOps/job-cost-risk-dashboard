@@ -22,6 +22,7 @@ import os
 import subprocess
 import sys
 import zipfile
+from datetime import date
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 sys.path.insert(0, os.path.dirname(__file__))
@@ -638,7 +639,7 @@ with st.sidebar:
 thresholds = det.DEFAULT_THRESHOLDS.with_overrides(threshold_overrides)
 
 
-def compute_results(data: dict, thresholds: det.Thresholds) -> dict:
+def compute_results(data: dict, thresholds: det.Thresholds, as_of: date | None = None) -> dict:
     """Every detector's output at the given thresholds. Deliberately not
     cached: the dataset is a few hundred rows across five jobs, this runs
     in well under a second, and caching it would mean keying the cache on
@@ -648,19 +649,22 @@ def compute_results(data: dict, thresholds: det.Thresholds) -> dict:
         "cost_flags": det.detect_cost_anomalies(data, thresholds),
         "drift_flags": det.detect_budget_drift(data, thresholds),
         "commitment_flags": det.detect_commitment_issues(data, thresholds),
-        "schedule_risk": det.compute_schedule_risk(data, thresholds=thresholds),
-        "co_aging": det.detect_co_aging(data, thresholds=thresholds),
-        "allowances": det.detect_allowance_overages(data, thresholds=thresholds),
+        "schedule_risk": det.compute_schedule_risk(data, as_of=as_of, thresholds=thresholds),
+        "co_aging": det.detect_co_aging(data, as_of=as_of, thresholds=thresholds),
+        "allowances": det.detect_allowance_overages(data, as_of=as_of, thresholds=thresholds),
         "billing": det.compute_billing_position(data, thresholds),
         "forecast": det.compute_cost_forecast(data, thresholds),
-        "compliance": det.detect_compliance_flags(data, thresholds=thresholds),
+        "compliance": det.detect_compliance_flags(data, as_of=as_of, thresholds=thresholds),
         "cross_project": det.detect_cross_project_patterns(data, thresholds=thresholds),
         "rollup": det.portfolio_rollup(data, thresholds=thresholds),
         "budgets": det.effective_budgets(data, thresholds),
     }
 
 
-results = compute_results(data, thresholds)
+# Keep the reproducible demo anchored to its synthetic reporting date, while
+# evaluating visitor-uploaded live ledgers against the current calendar date.
+reporting_date = date.today() if custom_data is not None else None
+results = compute_results(data, thresholds, as_of=reporting_date)
 
 
 def short_name(name: str) -> str:
