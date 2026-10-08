@@ -1801,6 +1801,7 @@ def test_upload_rejects_invalid_financial_numbers(filename, column, value):
     try:
         table = pd.read_csv(files[filename])
         files[filename].close()
+        table[column] = table[column].astype(object)
         table.loc[0, column] = value
         files[filename] = io.StringIO(table.to_csv(index=False))
         result, errors = det.load_data_from_files(files)
