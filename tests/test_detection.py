@@ -1842,3 +1842,33 @@ def test_unbudgeted_commitment_still_checks_over_invoicing(data):
     flags = det.detect_commitment_issues(data)
     assert any(f.project_id == pid and f.code == code and f.kind == "buyout" for f in flags)
     assert any(f.project_id == pid and f.code == code and f.kind == "over-invoiced" for f in flags)
+
+
+def test_approved_change_order_without_budget_or_spend_enters_forecast(data):
+    data = {name: frame.copy() for name, frame in data.items()}
+    co = data["change_orders"].iloc[0].copy()
+    pid = co["project_id"]
+    code = data["cost_codes"]["code"].iloc[0]
+    # Use a new cost code to isolate an approved variation with no other scope.
+    code = "99-99"
+    data["cost_codes"] = pd.concat([
+        data["cost_codes"],
+        pd.DataFrame([{"code": code, "description": "Approved extra scope"}]),
+    ], ignore_index=True)
+    co["co_id"] = "CO-ISOLATED-APPROVED"
+    co["code"] = code
+    co["amount"] = 12000.0
+    co["cost_amount"] = 9000.0
+    co["approved_date"] = pd.Timestamp("2025-01-15")
+    data["change_orders"] = pd.concat([
+        data["change_orders"], pd.DataFrame([co])
+    ], ignore_index=True)
+    budgets = det.effective_budgets(data)
+    row = budgets[(budgets["project_id"] == pid) & (budgets["code"] == code)].iloc[0]
+    assert row["original_budget"] == 0
+    assert row["current_budget"] == pytest.approx(9000)
+    assert row["forecast_at_completion"] >= 9000
+    forecast = next(item for item in det.compute_cost_forecast(data) if item.project_id == pid)
+    assert forecast.budget_at_completion == pytest.approx(
+        budgets.loc[budgets["project_id"] == pid, "current_budget"].sum()
+    )
