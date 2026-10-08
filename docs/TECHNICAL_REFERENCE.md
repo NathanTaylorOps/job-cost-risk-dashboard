@@ -11,8 +11,8 @@ validates, the whole dashboard switches to your data: thresholds, charts
 and the call list all update together. Remove the upload and it falls
 back to the demo.
 
-The schema below is exactly what [`src/detection.py`](src/detection.py)
-reads and what [`src/generate_data.py`](src/generate_data.py) produces, so
+The schema below is exactly what [`src/detection.py`](../src/detection.py)
+reads and what [`src/generate_data.py`](../src/generate_data.py) produces, so
 the fastest way to build a valid upload is to open one of the generated
 files in `data/` (run the app once to create it) and match its columns.
 Extra columns are ignored; a missing one is reported by name instead of
@@ -38,11 +38,11 @@ crashing the page, and `projects.csv`, `cost_codes.csv` and
 `pandas.to_datetime`, so any common date format works. The validation
 that backs this table lives in `detection.REQUIRED_COLUMNS` and
 `detection.load_data_from_files`, exercised by
-[`tests/test_detection.py`](tests/test_detection.py)'s upload tests.
+[`tests/test_detection.py`](../tests/test_detection.py)'s upload tests.
 
 ## How the detection works
 
-Every threshold is in [`src/detection.py`](src/detection.py) with the
+Every threshold is in [`src/detection.py`](../src/detection.py) with the
 reasoning written next to it. They came from running jobs, and another
 business should calibrate them against its own history before trusting
 them.
@@ -149,14 +149,14 @@ differ by a byte. The snapshot has a fixed as-of date rather than a
 rolling one. A rolling "today" would make every seeded story (the change
 order unsigned for 87 days) drift day to day, so the snapshot is instead
 shifted forward as a block by one constant in
-[`src/dataset_config.py`](src/dataset_config.py), and it can be moved on
+[`src/dataset_config.py`](../src/dataset_config.py), and it can be moved on
 without touching a single figure.
 
 ## Testing
 
-[`tests/test_detection.py`](tests/test_detection.py) is 113 tests in two
-halves, [`tests/test_app.py`](tests/test_app.py) adds 30 that run the
-dashboard itself, and [`tests/test_charts.py`](tests/test_charts.py) adds
+[`tests/test_detection.py`](../tests/test_detection.py) is 113 tests in two
+halves, [`tests/test_app.py`](../tests/test_app.py) adds 30 that run the
+dashboard itself, and [`tests/test_charts.py`](../tests/test_charts.py) adds
 36 that parse the charts it draws. That's 179 in total.
 
 The first half of the detection suite asserts that every planted problem
@@ -167,7 +167,7 @@ wasn't enough on its own. Mutating the detection code one line at a time
 (inverting CPI, shifting a band edge, swapping a numerator) left the
 severity-label tests green through fourteen of twenty-five deliberate
 errors. Every one of those twenty-five mutations, and the test that kills
-it, is listed in [`tests/MUTATIONS.md`](tests/MUTATIONS.md), so the claim
+it, is listed in [`tests/MUTATIONS.md`](../tests/MUTATIONS.md), so the claim
 is checkable rather than asserted.
 
 The app and chart tests catch the class of fault that has no stack trace.
