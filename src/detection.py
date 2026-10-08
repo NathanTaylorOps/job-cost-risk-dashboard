@@ -601,7 +601,11 @@ def load_data_from_files(files: dict) -> tuple[dict | None, list]:
         table = parsed[filename]
         for column in columns:
             values = pd.to_numeric(table[column], errors="coerce")
-            if (values.isna() | ~np.isfinite(values)).any():
+            # An unselected allowance legitimately has no selected_amount yet.
+            invalid = ~np.isfinite(values)
+            if filename == "allowances.csv" and column == "selected_amount":
+                invalid = invalid & table[column].notna()
+            if invalid.any():
                 errors.append(f"{filename}: {column} must contain finite numeric values.")
 
     for filename, identifier in (
