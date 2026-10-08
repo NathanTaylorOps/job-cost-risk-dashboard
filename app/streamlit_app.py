@@ -1160,7 +1160,7 @@ with tab_cost:
                 "Contract": money, "Change orders": money, "Invoiced": money,
                 "Retention held": money, "Retention released": money, "Paid": money, "Signed": DATE,
             }),
-            use_container_width=True, hide_index=True,
+            width="stretch", hide_index=True,
         )
         st.caption(
             "A trade signs one contract per job covering every scope it holds, so this "
@@ -1197,7 +1197,7 @@ with tab_schedule:
                 "critical_path": "Critical path", "weather_delay_days": "Weather days",
                 "other_delay_days": "Other days", "delay_reason": "Reason",
             }).style.format({"Baseline": DATE, "Forecast": DATE, "Actual": DATE}, na_rep="—"),
-            use_container_width=True, hide_index=True,
+            width="stretch", hide_index=True,
         )
 
 with tab_co:
@@ -1228,7 +1228,7 @@ with tab_co:
     st.dataframe(
         co_tbl.style.format({"Cost": money, "To owner": money, "Submitted": DATE,
                              "Approved": DATE}, na_rep="unsigned"),
-        use_container_width=True, hide_index=True,
+        width="stretch", hide_index=True,
     )
     st.caption(
         "Cost is what the change adds to the budget; To owner is what it adds to the "
@@ -1258,7 +1258,7 @@ with tab_allow:
     st.dataframe(
         al.style.format({"Allowance": money, "Selected": money, "Due": DATE,
                          "Selected on": DATE}, na_rep="not selected"),
-        use_container_width=True, hide_index=True,
+        width="stretch", hide_index=True,
     )
     st.caption(
         "An allowance is a contract number, so it carries the job's margin like every "
