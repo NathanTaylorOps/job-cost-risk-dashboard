@@ -162,6 +162,10 @@ st.markdown(
   /* The chart is already its own SVG frame with a title baked in, so the
      card here only needs to add air around it -- no title of its own. */
   .rg-chart-card { padding: 22px 24px 12px; }
+  /* The risk matrix needs the full dashboard width for five readable columns;
+     the general 88ch text-column limit must not constrain this chart. */
+  .rg-chart-card-wide { max-width: none; width: 100%; box-sizing: border-box; }
+  .rg-chart-card-wide svg { width: 100%; height: auto; }
 
   /* Headline KPI row: five hand-built cards, the same border/radius/shadow
      as every other card on the page, so the number of jobs a call sheet
@@ -439,11 +443,12 @@ def kpi_card(label: str, value: str, severity: str = None, delta: str = "") -> s
     )
 
 
-def chart_card(svg: str) -> None:
+def chart_card(svg: str, *, wide: bool = False) -> None:
     """A chart is already a self-contained SVG frame with its own title;
     the card here only adds the air and the border that make it read as
     one block of the page rather than an image floating in the margin."""
-    st.markdown(f'<div class="rg-card rg-chart-card">{svg}</div>', unsafe_allow_html=True)
+    cls = "rg-card rg-chart-card rg-chart-card-wide" if wide else "rg-card rg-chart-card"
+    st.markdown(f'<div class="{cls}">{svg}</div>', unsafe_allow_html=True)
 
 
 def tab_label(name: str, items) -> str:
@@ -741,7 +746,7 @@ else:
          **{c: r[c] for c in det.ROLLUP_COLUMNS}}
         for _, r in grid_rollup.iterrows()
     ]
-    chart_card(charts.signal_matrix(matrix_projects, ROLLUP_ROWS, lambda p, k: p[k]))
+    chart_card(charts.signal_matrix(matrix_projects, ROLLUP_ROWS, lambda p, k: p[k]), wide=True)
 
 worst = rollup.iloc[0]
 total_flags = sum(len(flags_for(p)) for p in rollup["project_id"])
