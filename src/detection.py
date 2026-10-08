@@ -553,6 +553,41 @@ def load_data_from_files(files: dict) -> tuple[dict | None, list]:
     if errors:
         return None, errors
 
+    # Validate identifiers used in joins before calculating risk.
+    codes = parsed["cost_codes.csv"]["code"].astype("string").str.strip()
+    if codes.isna().any() or codes.eq("").any() or codes.duplicated().any():
+        errors.append("cost_codes.csv: code must be populated and unique.")
+    valid_codes = set(codes.dropna())
+    for filename, table in parsed.items():
+        if filename == "cost_codes.csv" or "code" not in table.columns:
+            continue
+        references = table["code"].astype("string").str.strip()
+        if (references.isna() | references.eq("") | ~references.isin(valid_codes)).any():
+            errors.append(f"{filename}: unknown or missing cost code.")
+
+    budgets = parsed["project_budgets.csv"]
+    if budgets[["project_id", "code"]].duplicated().any():
+        errors.append("project_budgets.csv: duplicate project/code pair.")
+
+    commitments = parsed["commitments.csv"]
+    commitment_ids = commitments["commitment_id"].astype("string").str.strip()
+    if commitment_ids.isna().any() or commitment_ids.eq("").any() or commitment_ids.duplicated().any():
+        errors.append("commitments.csv: commitment_id must be populated and unique.")
+    parent_projects = dict(zip(commitment_ids, commitments["project_id"].astype("string").str.strip(), strict=True))
+    lines = parsed["commitment_lines.csv"]
+    if not lines.empty:
+        line_ids = lines["commitment_id"].astype("string").str.strip()
+        missing = line_ids.isna() | line_ids.eq("") | ~line_ids.isin(parent_projects)
+        if missing.any():
+            errors.append("commitment_lines.csv: unknown or missing commitment_id.")
+        else:
+            line_projects = lines["project_id"].astype("string").str.strip()
+            if (line_projects != line_ids.map(parent_projects)).any():
+                errors.append("commitment_lines.csv: project_id differs from parent commitment.")
+
+    if errors:
+        return None, errors
+
     return {name[:-4]: df for name, df in parsed.items()}, []
 
 
