@@ -231,15 +231,15 @@ st.markdown(
     border-radius: var(--rg-radius-sm) !important; border: 1.5px solid var(--rg-border) !important;
   }
   [data-testid="stAlert"] { border-radius: var(--rg-radius-md) !important; }
-  /* Native secondary text. Streamlit mounts Emotion styles after this
-     block, so selectors must outrank its generated class selectors without
-     depending on their version-specific hashes. Repeating stable attributes
-     raises specificity while keeping the rule resilient to hash changes. */
-  [data-testid="stCaptionContainer"][data-testid="stCaptionContainer"] > p,
-  [data-testid="stCaptionContainer"][data-testid="stCaptionContainer"] > p > strong {
+  /* Native secondary text. Streamlit's Emotion rules can use !important,
+     so keep these selectors on stable attributes/classes but give them
+     enough specificity to win without depending on generated hashes. */
+  html body .stApp [data-testid="stCaptionContainer"] > p,
+  html body .stApp [data-testid="stCaptionContainer"] > p > strong {
     color: var(--rg-ink-2) !important;
   }
-  [data-testid="stFileUploader"] [data-testid="stMarkdownContainer"] p {
+  html body .stApp [data-testid="stFileUploader"] small,
+  html body .stApp [data-testid="stFileUploader"] p {
     color: var(--rg-ink-2) !important;
   }
 
