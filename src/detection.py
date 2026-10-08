@@ -805,11 +805,12 @@ def effective_budgets(data: dict, thresholds: Thresholds | None = None) -> pd.Da
       the super reports per line on the pay application). Framing on a
       job past dry-in is 100%; landscaping on the same job is 0%. A flat
       project-wide % complete would call both of those anomalies.
-    - Suspected duplicate postings are taken out of spend before anything
-      is judged, so the same dollars are not flagged twice.
-    - forecast_at_completion per code: the larger of current budget and
-      commitment, or the spend extrapolated over progress once the line is
-      far enough along to trust that (capped)."""
+    - Suspected duplicates are excluded only from anomaly variance analysis;
+      booked ledger spend remains in financial forecasts until reversed.
+    - forecast_at_completion per code: while open, the maximum of current
+      budget, commitment, booked spend and capped spend extrapolation;
+      when substantially complete, booked spend plus uninvoiced commitments.
+      Approved variation-only cost codes are included as budget rows."""
     t = _thresholds(thresholds)
     tx = data["cost_transactions"]
     budgets = data["project_budgets"]
