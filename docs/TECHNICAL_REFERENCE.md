@@ -34,8 +34,10 @@ crashing the page, and `projects.csv`, `cost_codes.csv` and
 | `subcontractors.csv` | `sub_id, name, trade, insurance_expiry, license_expiry, active_projects` |
 
 `project_id` and `code` are the join keys tying every table back to
-`projects.csv` and `cost_codes.csv`. Every date column parses with
-`pandas.to_datetime`, so any common date format works. The validation
+`projects.csv` and `cost_codes.csv`. Date fields are parsed with `pandas.to_datetime`; use unambiguous ISO 8601 dates
+(`YYYY-MM-DD`) in uploaded ledgers. The bundled demonstration uses a fixed
+reporting date for repeatability, while uploaded ledgers are assessed against
+the current reporting date. The validation
 that backs this table lives in `detection.REQUIRED_COLUMNS` and
 `detection.load_data_from_files`, exercised by
 [`tests/test_detection.py`](../tests/test_detection.py)'s upload tests.
@@ -62,9 +64,11 @@ follow standard EVM formulas off the superintendent's per-line percent
 complete, and slip is read off the terminal critical-path milestone
 rather than summed, so one delay pushing everything behind it isn't
 counted several times. Forecast at completion is built line by line: the
-worst of budget, sub contract and extrapolated spend while a line is
-open, and actual cost plus what's still owed once it's substantially
-complete.
+worst of budget, sub contract, booked spend and extrapolated spend while
+a line is open, and booked spend plus the uninvoiced commitment balance
+once it's substantially complete. Approved change-order costs also enter
+the cost-code budget and forecast even when they introduce a new code;
+the corresponding approved sell prices change the revised contract value.
 
 ## Where it cries wolf
 
@@ -74,7 +78,8 @@ deployment. On a real ledger it fires on invoices that haven't landed far
 more often than on work that hasn't happened, which is why it's capped at
 LOW. The duplicate check is a suspicion, not an accusation: two identical
 progress draws will trip it, and it only ever says "confirm before the
-next pay run." The same underlying problem often raises several flags on
+next pay run." Suspected duplicate transactions remain in booked ledger
+spend and the financial forecast until a verified reversal is recorded. The same underlying problem often raises several flags on
 purpose, too. The Harborview cabinetry decision shows up as four
 different flags from one decision, which is why flag dollars must never
 be summed across a job.
